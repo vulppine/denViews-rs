@@ -1,0 +1,26 @@
+[package]
+name = "denviews"
+version = "0.1.0"
+edition = "2018"
+
+[features]
+default = ["hosted"]
+aws-lambda = ["lambda_runtime"]
+hosted = []
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+http = "0.2.4"
+hyper = "0.14.12"
+lambda_runtime = { version = "0.4", optional = true }
+log = "0.4.14"
+r2d2 = "0.8.9"
+r2d2_postgres = "0.18.1"
+rand = "0.8.4"
+rust-crypto = "0.2.36"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = "1.11.0"
+tracing = "0.1.26"
+tracing-subscriber = "0.2"
