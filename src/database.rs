@@ -2,9 +2,9 @@ use super::util::base64::*;
 use super::Error;
 use crypto::digest::Digest;
 use crypto::sha3::Sha3;
-use r2d2::Pool;
-use r2d2_postgres::{
-    postgres::{config::Config, NoTls, Row},
+use bb8::Pool;
+use bb8_postgres::{
+    tokio_postgres::{config::Config, NoTls, Row},
     PostgresConnectionManager,
 };
 use rand::{rngs::StdRng, Rng, SeedableRng};
@@ -14,10 +14,11 @@ pub struct DatabaseClient {
     db_pool: Pool<PostgresConnectionManager<NoTls>>,
 }
 
-pub enum DatabaseOperation {
+#[derive(Debug)]
+pub enum DatabaseOperation<'a> {
     // GET: Gets a page's views by string path.
     // If the record does not exist, this will always return an error.
-    Get(String),
+    Get(&'a str),
 
     // UPDATE: Updates a page's views by string path.
     //
@@ -26,7 +27,7 @@ pub enum DatabaseOperation {
     // into the database.
     //
     // This will, as of v0.1, only increment views.
-    UpdatePage(String, String),
+    UpdatePage(&'a str, &'a str),
 
     /*
     // CREATE: Creates a new page in the database.
@@ -60,20 +61,37 @@ pub struct ViewRecord {
     pub hits: i64,
 }
 
+#[derive(serde::Deserialize)]
+pub struct DatabaseSettings {
+    pub port: serde_json::value::Value,
+    pub site: String,
+    pub ignore_queries: bool
+}
+
+impl Default for DatabaseSettings {
+    fn default() -> Self {
+        DatabaseSettings {
+            port: 36621.into(),
+            site: "localhost".into(),
+            ignore_queries: true,
+        }
+    }
+}
+
 impl DatabaseClient {
-    pub fn new(pool_size: u32, config: Config) -> Result<Self, Error> {
+    pub async fn new(pool_size: u32, config: Config) -> Result<Self, Error> {
         Ok(DatabaseClient {
             db_pool: Pool::builder()
                 .max_size(pool_size)
-                .build(PostgresConnectionManager::new(config, NoTls))?,
+                .build(PostgresConnectionManager::new(config, NoTls)).await?,
         })
     }
 
-    pub fn execute(&self, op: DatabaseOperation) -> Result<Option<ViewRecord>, Error> {
+    pub async fn execute(&self, op: &DatabaseOperation<'_>) -> Result<Option<ViewRecord>, Error> {
         match op {
-            DatabaseOperation::Get(path) => Ok(Some(self.get_page_info(path)?)),
+            DatabaseOperation::Get(path) => Ok(Some(self.get_page_info(path).await?)),
             DatabaseOperation::UpdatePage(path, info) => {
-                self.append_visitor(path, info)?;
+                self.append_visitor(path, info).await?;
                 Ok(None)
             }
             /*
@@ -83,24 +101,24 @@ impl DatabaseClient {
             },
             */
             DatabaseOperation::Flush => {
-                self.flush()?;
+                self.flush().await?;
                 Ok(None)
             },
             DatabaseOperation::Init => {
-                self.init()?;
+                self.init().await?;
                 Ok(None)
             }
         }
     }
 
-    fn get_page_info(&self, path: String) -> Result<ViewRecord, Error> {
-        let mut conn = self.db_pool.get()?;
+    async fn get_page_info(&self, path: &str) -> Result<ViewRecord, Error> {
+        let conn = self.db_pool.get().await?;
 
         // this should ONLY RETURN a single row, ALWAYS
         // any other result is completely wrong
 
         let path_id: i32 = conn
-            .query_one("SELECT path_id FROM paths WHERE path = $1", &[&path])?
+            .query_one("SELECT path_id FROM paths WHERE path = $1", &[&path]).await?
             .get(0);
 
         // This is only safe because of the path_id abstraction that occurs.
@@ -108,17 +126,17 @@ impl DatabaseClient {
         let record = conn.query_one(
             format!("SELECT view_count, hit_count FROM path_{}", path_id).as_str(),
             &[],
-        )?;
+        ).await?;
 
         Ok(ViewRecord {
-            page: path,
+            page: path.to_string(),
             views: record.get(0),
             hits: record.get(1),
         })
     }
 
-    fn append_visitor(&self, path: String, visitor_info: String) -> Result<(), Error> {
-        let mut conn = self.db_pool.get()?;
+    async fn append_visitor(&self, path: &str, visitor_info: &str) -> Result<(), Error> {
+        let mut conn = self.db_pool.get().await?;
 
         // either get a page ID, or create it
         let page_id: i32 = conn
@@ -133,13 +151,13 @@ impl DatabaseClient {
                     )
                 ",
                 &[&path],
-            )?
-            .unwrap_or(self.create_page(path)?)
+            ).await?
+            .unwrap_or(self.create_page(path).await?)
             .get(0);
 
         let mut hasher = Sha3::sha3_256();
-        let salt: String = conn.query_one("SELECT salt FROM salt", &[])?.get(0);
-        hasher.input_str(&(visitor_info + &salt));
+        let salt: String = conn.query_one("SELECT salt FROM salt", &[]).await?.get(0);
+        hasher.input_str(&(visitor_info.to_string() + &salt));
         let visitor_hash = hasher.result_str();
 
         // optional! this is because if the visitor doesn't already exist, it is instead
@@ -147,7 +165,7 @@ impl DatabaseClient {
         let visitor = conn.query_opt(
             "SELECT visitor_id from visitors WHERE visitor_id = $1",
             &[&visitor_hash],
-        )?;
+        ).await?;
 
         if let Some(v) = visitor {
             let id: i64 = v.get(0);
@@ -161,7 +179,7 @@ impl DatabaseClient {
                     WHERE visitor_id = $1 AND page_id = $2
                     ",
                 &[&id, &page_id],
-            )?;
+            ).await?;
 
             if let Some(p) = page_visitor {
                 let hits: i64 = p.get(2);
@@ -172,22 +190,22 @@ impl DatabaseClient {
                     WHERE visitor_id = $1, page_id = $2
                     ",
                     &[&id, &page_id, &(hits + 1)],
-                )?;
+                ).await?;
             } else {
                 conn.execute(
                     "INSERT INTO page_visitors (visitor_id, page_id) VALUES ($1, $2)",
                     &[&id, &page_id],
-                )?;
+                ).await?;
             }
         } else {
             conn.execute(
                 "INSERT INTO visitors (visitor_id) VALUES ($1)",
                 &[&visitor_hash],
-            )?;
+            ).await?;
             conn.execute(
                 "INSERT INTO page_visitors (visitor_id, page_id) VALUES ($1, $2)",
                 &[&visitor_hash, &page_id],
-            )?;
+            ).await?;
         }
 
         Ok(())
@@ -198,13 +216,13 @@ impl DatabaseClient {
     //
     // If the path length is one, however, it will just create a page record,
     // and assume that the path category is the root of the website.
-    fn create_page(&self, path: String) -> Result<Row, Error> {
-        let mut conn = self.db_pool.get()?;
+    async fn create_page(&self, path: &str) -> Result<Row, Error> {
+        let conn = self.db_pool.get().await?;
 
         let row = conn.query_opt(
             "SELECT * FROM pages WHERE path_id = (SELECT * FROM paths WHERE path = $1)",
             &[&path],
-        )?;
+        ).await?;
 
         if let Some(r) = row {
             return Ok(r);
@@ -214,7 +232,7 @@ impl DatabaseClient {
             .query_one(
                 "INSERT INTO paths (path) VALUES ($1) RETURNING path_id",
                 &[&path],
-            )?
+            ).await?
             .get(0);
 
         let parts = path[1..].split('/').collect::<Vec<&str>>();
@@ -239,7 +257,7 @@ impl DatabaseClient {
                 WHERE folder_name = $1 AND parent_id = $2
                 ",
                 &[&part, &last_part_id],
-            )?;
+            ).await?;
 
             if let Some(r) = folder {
                 last_part_id = r.get(0);
@@ -250,7 +268,7 @@ impl DatabaseClient {
                 .query_one(
                     "INSERT INTO folders (folder_name) VALUES ($1) RETURNING folder_id",
                     &[&part],
-                )?
+                ).await?
                 .get(0);
         }
 
@@ -268,7 +286,7 @@ impl DatabaseClient {
                 &parts[parts.len() - 1],
                 &SystemTime::now(),
             ],
-        )?;
+        ).await?;
 
         conn.execute(
             format!(
@@ -295,16 +313,16 @@ impl DatabaseClient {
             )
             .as_str(),
             &[&row.get::<usize, i64>(0)],
-        )?;
+        ).await?;
 
         Ok(row)
     }
 
-    fn flush(&self) -> Result<(), Error> {
-        let mut conn = self.db_pool.get()?;
+    async fn flush(&self) -> Result<(), Error> {
+        let mut conn = self.db_pool.get().await?;
 
-        let views = conn.query("SELECT * FROM total_views", &[])?;
-        let mut transaction = conn.transaction()?;
+        let views = conn.query("SELECT * FROM total_views", &[]).await?;
+        let transaction = conn.transaction().await?;
 
         for page in views {
             let id: i32 = page.get(0);
@@ -320,7 +338,7 @@ impl DatabaseClient {
                 WHERE page_id = $3
                 ",
                 &[&views, &hits, &id],
-            )?;
+            ).await?;
 
             transaction.execute(
                 "
@@ -328,7 +346,7 @@ impl DatabaseClient {
                 WHERE page_id = $1
                 ",
                 &[&id],
-            )?;
+            ).await?;
         }
 
         let mut rng = StdRng::from_entropy();
@@ -336,19 +354,34 @@ impl DatabaseClient {
         rng.fill(&mut salt_raw[..]);
         let salt = bytes_to_base64(salt_raw.to_vec());
 
-        transaction.execute("DELETE FROM salt", &[])?;
-        transaction.execute("INSERT INTO salt (salt) VALUES ($1)", &[&salt])?;
+        transaction.execute("DELETE FROM salt", &[]).await?;
+        transaction.execute("INSERT INTO salt (salt) VALUES ($1)", &[&salt]).await?;
 
-        transaction.execute("DELETE FROM visitors", &[])?;
-        transaction.commit()?;
+        transaction.execute("DELETE FROM visitors", &[]).await?;
+        transaction.commit().await?;
 
         Ok(())
     }
 
-    fn init(&self) -> Result<(), Error> {
-        let mut conn = self.db_pool.get()?;
+    pub async fn get_settings(&self) -> Result<DatabaseSettings, Error> {
+        let conn = self.db_pool.get().await?;
 
-        let mut transaction = conn.transaction()?;
+        let port: serde_json::Value = conn.query_one("SELECT * FROM settings WHERE setting_name = 'port'", &[]).await?.get(1);
+        let site: serde_json::Value = conn.query_one("SELECT * FROM settings WHERE setting_name = 'site'", &[]).await?.get(1);
+        let ignore_queries: serde_json::Value = conn.query_one("SELECT * FROM settings WHERE setting_name = 'ignore_queries'", &[]).await?.get(1);
+
+
+        Ok(DatabaseSettings {
+            port,
+            site: site.as_str().unwrap().to_string(),
+            ignore_queries: ignore_queries.as_bool().unwrap()
+        })
+    }
+
+    async fn init(&self) -> Result<(), Error> {
+        let mut conn = self.db_pool.get().await?;
+
+        let transaction = conn.transaction().await?;
 
         transaction.execute(
             "
@@ -362,7 +395,7 @@ impl DatabaseClient {
             )
             ",
             &[],
-        )?;
+        ).await?;
 
         transaction.execute(
             "
@@ -372,7 +405,7 @@ impl DatabaseClient {
             )
             ",
             &[],
-        )?;
+        ).await?;
 
         transaction.execute(
             "
@@ -393,7 +426,7 @@ impl DatabaseClient {
             )
             ",
             &[],
-        )?;
+        ).await?;
 
         transaction.execute(
             "
@@ -402,7 +435,7 @@ impl DatabaseClient {
             )
             ",
             &[],
-        )?;
+        ).await?;
 
         transaction.execute(
             "
@@ -419,7 +452,7 @@ impl DatabaseClient {
             )
             ",
             &[],
-        )?;
+        ).await?;
 
         transaction.execute(
             "
@@ -441,11 +474,23 @@ impl DatabaseClient {
                 ON view_count.page_id = pages.page_id
             ",
             &[],
-        )?;
+        ).await?;
 
-        transaction.execute("CREATE TABLE salt (salt TEXT NOT NULL)", &[])?;
+        transaction.execute("CREATE TABLE salt (salt TEXT NOT NULL)", &[]).await?;
+        transaction.execute(
+            "
+            CREATE TABLE settings (
+                setting_name TEXT PRIMARY KEY,
+                setting JSON
+            )
+            ",
+            &[]
+        ).await?;
+        transaction.execute("INSERT INTO settings VALUES ('ignore_queries', 'false')", &[]).await?;
+        transaction.execute("INSERT INTO settings VALUES ('site', '\"localhost\"')", &[]).await?;
+        transaction.execute("INSERT INTO settings VALUES ('port', '36621'::JSON)", &[]).await?;
 
-        transaction.commit()?;
+        transaction.commit().await?;
 
         Ok(())
     }
