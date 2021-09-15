@@ -65,7 +65,9 @@ pub struct ViewRecord {
 pub struct DatabaseSettings {
     pub port: serde_json::value::Value,
     pub site: String,
-    pub ignore_queries: bool
+    pub use_https: bool,
+    pub ignore_queries: bool,
+    pub remove_index_pages: bool
 }
 
 impl Default for DatabaseSettings {
@@ -73,7 +75,9 @@ impl Default for DatabaseSettings {
         DatabaseSettings {
             port: 36621.into(),
             site: "localhost".into(),
+            use_https: false, // not until the dashboard is implemented
             ignore_queries: true,
+            remove_index_pages: true,
         }
     }
 }
@@ -136,7 +140,7 @@ impl DatabaseClient {
     }
 
     async fn append_visitor(&self, path: &str, visitor_info: &str) -> Result<(), Error> {
-        let mut conn = self.db_pool.get().await?;
+        let conn = self.db_pool.get().await?;
 
         // either get a page ID, or create it
         let page_id: i32 = conn
@@ -159,16 +163,17 @@ impl DatabaseClient {
         let salt: String = conn.query_one("SELECT salt FROM salt", &[]).await?.get(0);
         hasher.input_str(&(visitor_info.to_string() + &salt));
         let visitor_hash = hasher.result_str();
+        println!("{}", visitor_hash);
 
         // optional! this is because if the visitor doesn't already exist, it is instead
         // added into the visitors table
         let visitor = conn.query_opt(
-            "SELECT visitor_id from visitors WHERE visitor_id = $1",
+            "SELECT visitor_id FROM visitors WHERE visitor_id = $1",
             &[&visitor_hash],
         ).await?;
 
         if let Some(v) = visitor {
-            let id: i64 = v.get(0);
+            let id: String = v.get(0);
             let page_visitor = conn.query_opt(
                 "
                     SELECT
@@ -182,12 +187,12 @@ impl DatabaseClient {
             ).await?;
 
             if let Some(p) = page_visitor {
-                let hits: i64 = p.get(2);
+                let hits: i32 = p.get(2);
                 conn.execute(
                     "
                     UPDATE page_visitors
                     SET visitor_hits = $3
-                    WHERE visitor_id = $1, page_id = $2
+                    WHERE visitor_id = $1 AND page_id = $2
                     ",
                     &[&id, &page_id, &(hits + 1)],
                 ).await?;
@@ -220,7 +225,7 @@ impl DatabaseClient {
         let conn = self.db_pool.get().await?;
 
         let row = conn.query_opt(
-            "SELECT * FROM pages WHERE path_id = (SELECT * FROM paths WHERE path = $1)",
+            "SELECT * FROM pages WHERE path_id = (SELECT path_id FROM paths WHERE path = $1)",
             &[&path],
         ).await?;
 
@@ -228,14 +233,17 @@ impl DatabaseClient {
             return Ok(r);
         }
 
-        let path_id: i64 = conn
+        let path_id: i32 = conn
             .query_one(
                 "INSERT INTO paths (path) VALUES ($1) RETURNING path_id",
                 &[&path],
             ).await?
             .get(0);
 
-        let parts = path[1..].split('/').collect::<Vec<&str>>();
+        let parts = match path.len() {
+            0 => vec![""],
+            _ => path.split('/').collect::<Vec<&str>>()
+        };
         /*
         if parts.len() == 1 {
                 conn.execute(
@@ -246,7 +254,7 @@ impl DatabaseClient {
         }
         */
 
-        let mut last_part_id = 0i64;
+        let mut last_part_id = 0i32;
         for part in parts[..parts.len() - 1].iter() {
             let folder: Option<Row> = conn.query_opt(
                 "
@@ -281,7 +289,7 @@ impl DatabaseClient {
             RETURNING
                 page_id",
             &[
-                &last_part_id.to_string(),
+                &last_part_id,
                 &path_id,
                 &parts[parts.len() - 1],
                 &SystemTime::now(),
@@ -304,15 +312,19 @@ impl DatabaseClient {
                             COUNT(visitor_id) AS views,
                             SUM(visitor_hits) AS hits
                         FROM page_visitors
+                        WHERE page_id = {}
                         GROUP BY page_id
-                        WHERE page_id = $1) AS view_count
+                        UNION ALL
+                        SELECT {1}, 0, 0) AS view_count
                     LEFT JOIN pages
                     ON view_count.page_id = pages.page_id
+                    LIMIT 1
                 ",
-                path_id
+                path_id,
+                row.get::<usize, i32>(0),
             )
             .as_str(),
-            &[&row.get::<usize, i64>(0)],
+            &[],
         ).await?;
 
         Ok(row)
@@ -333,7 +345,7 @@ impl DatabaseClient {
                 "
                 UPDATE pages
                 SET
-                    total_views = $1
+                    total_views = $1,
                     total_hits = $2
                 WHERE page_id = $3
                 ",
@@ -369,12 +381,15 @@ impl DatabaseClient {
         let port: serde_json::Value = conn.query_one("SELECT * FROM settings WHERE setting_name = 'port'", &[]).await?.get(1);
         let site: serde_json::Value = conn.query_one("SELECT * FROM settings WHERE setting_name = 'site'", &[]).await?.get(1);
         let ignore_queries: serde_json::Value = conn.query_one("SELECT * FROM settings WHERE setting_name = 'ignore_queries'", &[]).await?.get(1);
+        let remove_index_pages: serde_json::Value = conn.query_one("SELECT * FROM settings WHERE setting_name = 'remove_index_pages'", &[]).await?.get(1);
 
 
         Ok(DatabaseSettings {
             port,
             site: site.as_str().unwrap().to_string(),
-            ignore_queries: ignore_queries.as_bool().unwrap()
+            use_https: false, // not until the dashboard is implemented!!! seriously!!!
+            ignore_queries: ignore_queries.as_bool().unwrap(),
+            remove_index_pages: remove_index_pages.as_bool().unwrap()
         })
     }
 
@@ -401,7 +416,7 @@ impl DatabaseClient {
             "
             CREATE TABLE paths (
                 path_id INT PRIMARY KEY GENERATED BY DEFAULT AS IDENTITY,
-                path_name TEXT NOT NULL
+                path TEXT NOT NULL
             )
             ",
             &[],
@@ -414,9 +429,9 @@ impl DatabaseClient {
                 folder_id INT NOT NULL,
                 path_id INT NOT NULL,
                 page_name TEXT NOT NULL,
-                first_visited DATE,
-                total_views INT NOT NULL DEFAULT 0,
-                total_hits INT NOT NULL DEFAULT 0,
+                first_visited TIMESTAMP,
+                total_views BIGINT NOT NULL DEFAULT 0,
+                total_hits BIGINT NOT NULL DEFAULT 0,
                 CONSTRAINT page_folder
                     FOREIGN KEY (folder_id)
                     REFERENCES folders (folder_id),
@@ -477,6 +492,13 @@ impl DatabaseClient {
         ).await?;
 
         transaction.execute("CREATE TABLE salt (salt TEXT NOT NULL)", &[]).await?;
+        let mut rng = StdRng::from_entropy();
+        let mut salt_raw: [u8; 32] = [0; 32];
+        rng.fill(&mut salt_raw[..]);
+        let salt = bytes_to_base64(salt_raw.to_vec());
+
+        transaction.execute("INSERT INTO salt (salt) VALUES ($1)", &[&salt]).await?;
+
         transaction.execute(
             "
             CREATE TABLE settings (
@@ -486,7 +508,9 @@ impl DatabaseClient {
             ",
             &[]
         ).await?;
+        transaction.execute("INSERT INTO settings VALUES ('schema_ver', '1'::JSON)", &[]).await?;
         transaction.execute("INSERT INTO settings VALUES ('ignore_queries', 'false')", &[]).await?;
+        transaction.execute("INSERT INTO settings VALUES ('remove_index_pages', 'true')", &[]).await?;
         transaction.execute("INSERT INTO settings VALUES ('site', '\"localhost\"')", &[]).await?;
         transaction.execute("INSERT INTO settings VALUES ('port', '36621'::JSON)", &[]).await?;
 
