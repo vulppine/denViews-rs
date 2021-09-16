@@ -1,8 +1,10 @@
 use super::api_handler::{APIHandler, APIRequest};
 use async_stream::stream;
 use crate::Error;
+use futures_core::Stream;
+use futures_util::TryFutureExt;
 use hyper::{
-    server::accept::from_stream,
+    server::accept::{Accept, from_stream},
     server::conn::{AddrStream, Http},
     service::{make_service_fn, service_fn},
     Body, Response, Server,
@@ -40,7 +42,13 @@ pub async fn serve() {
     ));
 
     match settings.use_https {
+
         false => {
+            let addr = SocketAddr::from((
+                [127, 0, 0, 1],
+                80
+            ));
+
             let service_wrapper = make_service_fn(move |conn: &AddrStream| {
                 let client = client.clone();
                 let ip = conn.remote_addr();
@@ -57,6 +65,11 @@ pub async fn serve() {
             Server::bind(&addr).serve(service_wrapper).await.unwrap();
         }
         true => {
+            let addr = SocketAddr::from((
+                [127, 0, 0, 1],
+                36621
+            ));
+
             let certs = certs(&mut BufReader::new(
                 File::open(std::env::var("DENVIEWS_CERT").unwrap()).unwrap(),
             ))
@@ -73,17 +86,25 @@ pub async fn serve() {
 
             // !!! UNTESTED CODE !!!
 
-            let stream = from_stream(stream! {
+
+            // This no longer crashes the server, but honstly, a user-friendly error *should* be
+            // returned...
+            //
+            // TODO: Find a way to return a user-friendly error!
+            let stream = TlsStreamWrap(Box::pin(stream! {
                 loop {
-                    let (socket, ip) = listener.accept().await.map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+                    let (socket, ip) = listener.accept().await?;
                     let tls = tls.clone();
-                    let tls_socket = tls.accept(socket).await.map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+                    let tls_accept = tls.accept(socket).await;
 
-                    yield Ok::<_, io::Error>(TlsIncomingStream(tls_socket, ip))
+                    match tls_accept {
+                        Ok(s) => { yield Ok::<_, io::Error>(IncomingStream::<TlsStream<TcpStream>>(s, ip)); }
+                        Err(e) => { println!("error occurred on tls connect: {}", e); continue; }
+                    }
                 }
-            });
+            }));
 
-            let service_wrapper = make_service_fn(move |conn: &TlsIncomingStream| {
+            let service_wrapper = make_service_fn(move |conn: &IncomingStream<_>| {
                 let client = client.clone();
                 let ip = conn.ip();
                 async move {
@@ -104,15 +125,29 @@ pub async fn serve() {
     }
 }
 
-struct TlsIncomingStream(TlsStream<TcpStream>, SocketAddr);
+struct TlsStreamWrap(Pin<Box<dyn Stream<Item = Result<IncomingStream<TlsStream<TcpStream>>, io::Error>>>>);
 
-impl TlsIncomingStream {
+impl Accept for TlsStreamWrap {
+    type Conn = IncomingStream<TlsStream<TcpStream>>;
+    type Error = io::Error;
+
+    fn poll_accept(
+        mut self: Pin<&mut Self>,
+        ctx: &mut Context,
+    ) -> Poll<Option<Result<Self::Conn, Self::Error>>> {
+        Pin::new(&mut self.0).poll_next(ctx)
+    }
+}
+
+struct IncomingStream<S: AsyncRead + AsyncWrite>(S, SocketAddr);
+
+impl <S: AsyncRead + AsyncWrite> IncomingStream<S> {
     fn ip(&self) -> SocketAddr {
         self.1
     }
 }
 
-impl AsyncRead for TlsIncomingStream {
+impl <S: AsyncRead + AsyncWrite + Unpin>AsyncRead for IncomingStream<S> {
     fn poll_read(
         mut self: Pin<&mut Self>,
         ctx: &mut Context<'_>,
@@ -122,7 +157,7 @@ impl AsyncRead for TlsIncomingStream {
     }
 }
 
-impl AsyncWrite for TlsIncomingStream {
+impl <S: AsyncRead + AsyncWrite + Unpin>AsyncWrite for IncomingStream<S> {
     fn poll_flush(mut self: Pin<&mut Self>, ctx: &mut Context<'_>) -> Poll<io::Result<()>> {
         Pin::new(&mut self.0).poll_flush(ctx)
     }

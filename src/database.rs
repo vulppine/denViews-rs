@@ -382,12 +382,13 @@ impl DatabaseClient {
         let site: serde_json::Value = conn.query_one("SELECT * FROM settings WHERE setting_name = 'site'", &[]).await?.get(1);
         let ignore_queries: serde_json::Value = conn.query_one("SELECT * FROM settings WHERE setting_name = 'ignore_queries'", &[]).await?.get(1);
         let remove_index_pages: serde_json::Value = conn.query_one("SELECT * FROM settings WHERE setting_name = 'remove_index_pages'", &[]).await?.get(1);
+        let use_https: serde_json::Value = conn.query_one("SELECT * FROM settings WHERE setting_name = 'use_https'", &[]).await?.get(1);
 
 
         Ok(DatabaseSettings {
             port,
             site: site.as_str().unwrap().to_string(),
-            use_https: false, // not until the dashboard is implemented!!! seriously!!!
+            use_https: use_https.as_bool().unwrap(), // not until the dashboard is implemented!!! seriously!!!
             ignore_queries: ignore_queries.as_bool().unwrap(),
             remove_index_pages: remove_index_pages.as_bool().unwrap()
         })
