@@ -11,13 +11,16 @@ hosted = []
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+async-stream = "0.3.2"
 bb8 = "0.7.1"
 bb8-postgres = { version = "0.7.0", features = ["with-serde_json-1", "with-time-0_2"] }
+futures-core = "0.3.17"
 http = "0.2.4"
-hyper = { version = "0.14.12", features = ["client", "server", "http1", "tcp"] }
+hyper = { version = "0.14.12", features = ["client", "server", "http1", "tcp", "stream"] }
 hyper-tls = "0.5.0"
 lambda_runtime = { version = "0.4", optional = true }
 log = "0.4.14"
+native-tls = "0.2"
 r2d2 = "0.8.9"
 r2d2_postgres = "0.18.1"
 rand = "0.8.4"
@@ -26,5 +29,6 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tokio = { version = "1.11.0", features = ["full"] }
 tokio-native-tls = "0.3.0"
+tokio-rustls = "0.22.0"
 tracing = "0.1.26"
 tracing-subscriber = "0.2"
