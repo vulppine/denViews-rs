@@ -29,6 +29,7 @@ rand = "0.8.4"
 rust-crypto = "0.2.36"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+serde_qs = "0.8.4"
 tokio = { version = "1.11.0", features = ["full"] }
 tokio-native-tls = "0.3.0"
 tokio-rustls = "0.22.0"

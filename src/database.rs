@@ -51,7 +51,7 @@ pub enum DatabaseOperation<'a> {
     // with concurrent transactions.
     Flush,
 
-    Init
+    Init(DatabaseSettings)
 }
 
 #[derive(serde::Serialize)]
@@ -61,9 +61,8 @@ pub struct ViewRecord {
     pub hits: i64,
 }
 
-#[derive(serde::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize, Debug)]
 pub struct DatabaseSettings {
-    pub port: serde_json::value::Value,
     pub site: String,
     pub use_https: bool,
     pub ignore_queries: bool,
@@ -73,9 +72,8 @@ pub struct DatabaseSettings {
 impl Default for DatabaseSettings {
     fn default() -> Self {
         DatabaseSettings {
-            port: 36621.into(),
             site: "localhost".into(),
-            use_https: false, // not until the dashboard is implemented
+            use_https: true,
             ignore_queries: true,
             remove_index_pages: true,
         }
@@ -87,7 +85,23 @@ impl DatabaseClient {
         Ok(DatabaseClient {
             db_pool: Pool::builder()
                 .max_size(pool_size)
-                .build(PostgresConnectionManager::new(config, NoTls)).await?,
+                .build(PostgresConnectionManager::new(config, NoTls)).await?
+        })
+    }
+
+    pub async fn check(&self) -> Result<bool, Error> {
+        //TODO: More indepth method of actually checking for a valid database.
+        // At the moment, this is just to ensure that the database has a *settings* file,
+        // and isn't some kind of validation check.
+        let conn = self.db_pool.get().await?;
+        let check = conn.query_opt("SELECT setting FROM settings WHERE setting_name = 'schema_ver'", &[]).await;
+
+        Ok(match check {
+            Err(e) => {
+                println!("An error occurred while verifying the database. Returning is_init: false, in case it is not initialized. Error: {}", e);
+                false
+            }
+            Ok(r) => r.is_some()
         })
     }
 
@@ -108,8 +122,8 @@ impl DatabaseClient {
                 self.flush().await?;
                 Ok(None)
             },
-            DatabaseOperation::Init => {
-                self.init().await?;
+            DatabaseOperation::Init(s) => {
+                self.init(s).await?;
                 Ok(None)
             }
         }
@@ -378,23 +392,18 @@ impl DatabaseClient {
     pub async fn get_settings(&self) -> Result<DatabaseSettings, Error> {
         let conn = self.db_pool.get().await?;
 
-        let port: serde_json::Value = conn.query_one("SELECT * FROM settings WHERE setting_name = 'port'", &[]).await?.get(1);
-        let site: serde_json::Value = conn.query_one("SELECT * FROM settings WHERE setting_name = 'site'", &[]).await?.get(1);
-        let ignore_queries: serde_json::Value = conn.query_one("SELECT * FROM settings WHERE setting_name = 'ignore_queries'", &[]).await?.get(1);
-        let remove_index_pages: serde_json::Value = conn.query_one("SELECT * FROM settings WHERE setting_name = 'remove_index_pages'", &[]).await?.get(1);
-        let use_https: serde_json::Value = conn.query_one("SELECT * FROM settings WHERE setting_name = 'use_https'", &[]).await?.get(1);
+        let settings = conn.query_opt("SELECT setting FROM settings WHERE setting_name = 'current_settings'", &[]).await;
 
-
-        Ok(DatabaseSettings {
-            port,
-            site: site.as_str().unwrap().to_string(),
-            use_https: use_https.as_bool().unwrap(), // not until the dashboard is implemented!!! seriously!!!
-            ignore_queries: ignore_queries.as_bool().unwrap(),
-            remove_index_pages: remove_index_pages.as_bool().unwrap()
-        })
+        match settings {
+            Err(_) => Ok(DatabaseSettings::default()),
+            Ok(v) => match v {
+                Some(s) => Ok(serde_json::from_value(s.get(0))?),
+                None => Ok(DatabaseSettings::default())
+            }
+        }
     }
 
-    async fn init(&self) -> Result<(), Error> {
+    async fn init(&self, settings: &DatabaseSettings) -> Result<(), Error> {
         let mut conn = self.db_pool.get().await?;
 
         let transaction = conn.transaction().await?;
@@ -409,6 +418,13 @@ impl DatabaseClient {
                     FOREIGN KEY (parent_id)
                     REFERENCES folders (folder_id)
             )
+            ",
+            &[],
+        ).await?;
+        transaction.execute(
+            "
+            INSERT INTO folders
+            VALUES (0, null, '')
             ",
             &[],
         ).await?;
@@ -510,10 +526,7 @@ impl DatabaseClient {
             &[]
         ).await?;
         transaction.execute("INSERT INTO settings VALUES ('schema_ver', '1'::JSON)", &[]).await?;
-        transaction.execute("INSERT INTO settings VALUES ('ignore_queries', 'false')", &[]).await?;
-        transaction.execute("INSERT INTO settings VALUES ('remove_index_pages', 'true')", &[]).await?;
-        transaction.execute("INSERT INTO settings VALUES ('site', '\"localhost\"')", &[]).await?;
-        transaction.execute("INSERT INTO settings VALUES ('port', '36621'::JSON)", &[]).await?;
+        transaction.execute("INSERT INTO settings VALUES ('current_settings', $1)", &[&serde_json::to_value(settings)?]).await?;
 
         transaction.commit().await?;
 

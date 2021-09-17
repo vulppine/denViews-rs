@@ -1,15 +1,17 @@
 use crate::database::*;
 use crate::Error;
-use http::uri::Scheme;
 use hyper::{
     header::{LOCATION, USER_AGENT},
     Body, Client, Method, Request, Response, Uri,
 };
 use std::{net::SocketAddr, sync::Arc};
+use super::tools::ToolsHandler;
 
-pub struct APIHandler {
-    db: DatabaseClient,
+pub struct APIHandler<'a> {
+    db: Arc<DatabaseClient>,
+    tools: ToolsHandler<'a>,
     settings: Arc<DatabaseSettings>,
+    init_check: bool, // lazy, find a better way to do this
 }
 
 pub struct APIRequest {
@@ -18,8 +20,21 @@ pub struct APIRequest {
     pub auth: bool, // maybe make a struct for this?
 }
 
-impl APIHandler {
-    pub async fn new() -> Result<Self, Error> {
+#[derive(Debug)]
+pub struct APIError {
+    reason: String
+}
+
+impl std::error::Error for APIError {}
+
+impl std::fmt::Display for APIError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "api error: {}", self.reason)
+    }
+}
+
+impl<'a> APIHandler<'a> {
+    pub async fn new() -> Result<self::APIHandler<'a>, Error> {
         // this assumes your DB server and this application server are on
         // the same network, and the DB server is otherwise inaccessible from
         // the outside without some kind of VPN/gateway into the network
@@ -29,31 +44,49 @@ impl APIHandler {
         let pool_amount = std::env::var("DENVIEWS_POOL_AMOUNT")
             .unwrap_or_else(|_| "16".to_string())
             .parse::<u32>()?;
-        let db = DatabaseClient::new(
+        let db = Arc::new(DatabaseClient::new(
             pool_amount,
             format!("postgresql://{1}:{2}@{0}", host, user, pass).parse()?,
         )
-        .await?;
-        let mut settings = db.get_settings().await;
+        .await?);
+        let init_check = db.check().await?;
 
-        // DEFER THIS TO AN INITIALIZATION FUNCTION OR SPECIAL CLIENT
-        if settings.is_err() {
-            db.execute(&DatabaseOperation::Init).await?;
-            settings = db.get_settings().await;
+        if !init_check {
+            println!("!!!-- denViews MUST be set up before it is ready! Visit https://[host]/_denViews_dash/init and fill out the form! --!!!");
+        }
+
+        let settings = match init_check {
+            true => Arc::new(db.get_settings().await?),
+            false => Arc::new(DatabaseSettings::default())
         };
 
-        let settings = Arc::new(settings.unwrap());
+        let tools = ToolsHandler::new(db.clone());
 
-        Ok(APIHandler { db, settings })
+        Ok(APIHandler { db, tools, settings, init_check })
     }
 
     pub fn settings(&self) -> Arc<DatabaseSettings> {
         self.settings.clone()
     }
 
-    pub async fn execute(&self, req: &APIRequest) -> Result<Response<Body>, Error> {
+    pub async fn execute(&self, mut req: APIRequest) -> Result<Response<Body>, Error> {
         println!("{:?}", req.req.uri());
         let path = self.path_as_vec(&req.req);
+
+        if !self.init_check {
+            return match (req.req.method(), path[0].as_str()) {
+                (&Method::GET, "_denViews_dash") | (&Method::POST, "_denViews_dash") => match req.auth {
+                    true => self.tools.handle(&mut req.req).await,
+                    false => Ok(Response::builder()
+                        .status(401)
+                        .body(Body::from("You are not authorized."))?)
+                }
+
+                _ => Ok(Response::builder()
+                    .status(500)
+                    .body(Body::from("denViews has not been initialized yet, or there is a settings error."))?)
+            }
+        }
 
         match (req.req.method(), path[0].as_str()) {
             // TODO: Analytical dashboard for the database. (andauthorizatiomethod)
@@ -62,10 +95,8 @@ impl APIHandler {
                     .status(404)
                     .body(Body::from("Resource grabbing is not implemented yet."))?)
             }
-            (&Method::GET, "_denViews_dash") => match req.auth {
-                true => Ok(Response::builder().status(500).body(Body::from(
-                    "Internal dashboard not implemented yet. Whoops!",
-                ))?),
+            (&Method::GET, "_denViews_dash") | (&Method::POST, "_denViews_dash") => match req.auth {
+                true => self.tools.handle(&mut req.req).await,
                 false => Ok(Response::builder()
                     .status(401)
                     .body(Body::from("You are not authorized."))?),
@@ -129,10 +160,15 @@ impl APIHandler {
         match op {
             DatabaseOperation::Get(p) | DatabaseOperation::UpdatePage(p, _) => {
                 if check {
-                    let (check, reason) = self.check_site(p).await?;
-                    if !check {
-                        return Ok(Response::builder().status(500).body(Body::from(reason))?);
-                    }
+                    let check = self.check_site(p).await;
+                    match check {
+                        Err(e) => return Ok(Response::builder().status(500).body(Body::from(e.to_string()))?),
+                        Ok(v) => {
+                            if !v.0 {
+                                return Ok(Response::builder().status(500).body(Body::from(v.1))?);
+                            }
+                        }
+                    };
                 }
 
                 match self.db.execute(&op).await {
@@ -158,9 +194,17 @@ impl APIHandler {
     }
 
     async fn check_site(&self, path: &str) -> Result<(bool, String), Error> {
+        use http::uri::Scheme;
+        use std::convert::TryFrom;
+
         let tracking = self.settings.site.parse::<Uri>()?.into_parts();
+
+        if tracking.authority.is_none() {
+            return Err(Box::new(APIError { reason: "no authority found in tracking url".into() }));
+        }
+
         let uri = Uri::builder()
-            .scheme(tracking.scheme.unwrap())
+            .scheme(tracking.scheme.unwrap_or(Scheme::try_from("http")?))
             .authority(tracking.authority.unwrap())
             .path_and_query(String::from("/") + path)
             .build()?;

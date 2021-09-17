@@ -37,10 +37,6 @@ use tokio_rustls::{
 pub async fn serve() {
     let client = Arc::new(APIHandler::new().await.unwrap());
     let settings = &client.clone().settings();
-    let addr = SocketAddr::from((
-        [127, 0, 0, 1],
-        client.settings().port.as_u64().unwrap() as u16,
-    ));
 
     match settings.use_https {
 
@@ -61,7 +57,7 @@ pub async fn serve() {
                         // authenticated
                         let auth = ip.ip() == SocketAddr::from(([127, 0, 0, 1], 0)).ip();
 
-                        async move { client.execute(&APIRequest { req, ip, auth }).await }
+                        async move { client.execute(APIRequest { req, ip, auth }).await }
                     }))
                 }
             });
@@ -143,7 +139,7 @@ pub async fn serve() {
                         let client = client.clone();
                         let auth = ip.ip() == SocketAddr::from(([127, 0, 0, 1], 0)).ip();
 
-                        async move { client.execute(&APIRequest { req, ip, auth }).await }
+                        async move { client.execute(APIRequest { req, ip, auth }).await }
                     }))
                 }
             });

@@ -1,7 +1,8 @@
 // several repeats of the run() command but separated into several cfg macros, oh man
 
-pub mod hosted;
-pub mod api_handler;
+mod hosted;
+mod api_handler;
+mod tools;
 
 #[cfg(feature = "hosted")]
 pub async fn run() {
