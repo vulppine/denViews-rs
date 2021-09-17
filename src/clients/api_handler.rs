@@ -26,8 +26,14 @@ impl APIHandler {
         let user = std::env::var("DENVIEWS_USER").unwrap_or_else(|_| "denviews".to_string());
         let pass = std::env::var("DENVIEWS_PASS").unwrap_or_else(|_| "denviews".to_string());
         let host = std::env::var("DENVIEWS_HOST").unwrap_or_else(|_| "localhost".to_string());
-        let pool_amount = std::env::var("DENVIEWS_POOL_AMOUNT").unwrap_or_else(|_| "16".to_string()).parse::<u32>()?;
-        let db = DatabaseClient::new(pool_amount, format!("postgresql://{1}:{2}@{0}", host, user, pass).parse()?).await?;
+        let pool_amount = std::env::var("DENVIEWS_POOL_AMOUNT")
+            .unwrap_or_else(|_| "16".to_string())
+            .parse::<u32>()?;
+        let db = DatabaseClient::new(
+            pool_amount,
+            format!("postgresql://{1}:{2}@{0}", host, user, pass).parse()?,
+        )
+        .await?;
         let mut settings = db.get_settings().await;
 
         // DEFER THIS TO AN INITIALIZATION FUNCTION OR SPECIAL CLIENT
@@ -51,8 +57,12 @@ impl APIHandler {
 
         match (req.req.method(), path[0].as_str()) {
             // TODO: Analytical dashboard for the database. (andauthorizatiomethod)
-            // i'd hope that all hyper URIs have absolute URIs
-            (&Method::GET, "dash") => match req.auth {
+            (&Method::GET, "favicon.ico") | (&Method::GET, "_denViews_res") => {
+                Ok(Response::builder()
+                    .status(404)
+                    .body(Body::from("Resource grabbing is not implemented yet."))?)
+            }
+            (&Method::GET, "_denViews_dash") => match req.auth {
                 true => Ok(Response::builder().status(500).body(Body::from(
                     "Internal dashboard not implemented yet. Whoops!",
                 ))?),
@@ -61,13 +71,10 @@ impl APIHandler {
                     .body(Body::from("You are not authorized."))?),
             },
 
-            (&Method::POST, "flush") => {
-                if req.auth {
-                    return self.db_op(DatabaseOperation::Flush, false).await;
-                }
-
-                Ok(Response::builder().status(401).body(Body::from(""))?)
-            }
+            (&Method::POST, "_denViews_flush") => match req.auth {
+                true => self.db_op(DatabaseOperation::Flush, false).await,
+                false => Ok(Response::builder().status(401).body(Body::from(""))?),
+            },
 
             (&Method::GET, _) => {
                 self.db_op(
