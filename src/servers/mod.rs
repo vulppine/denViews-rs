@@ -1,12 +1,11 @@
 // several repeats of the run() command but separated into several cfg macros, oh man
 
-mod hosted;
-mod api_handler;
-mod tools;
+mod handlers;
+mod routing;
 
 #[cfg(feature = "hosted")]
 pub async fn run() {
-    hosted::serve().await;
+    handlers::hosted::serve().await;
 }
 
 #[cfg(feature = "aws-lambda")]
