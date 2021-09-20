@@ -5,18 +5,18 @@ mod util;
 // COMMON STRUCTS
 #[derive(serde::Serialize)]
 pub struct ViewRecord {
-    #[serde(skip)]
-    pub id: i32,
     pub page: String,
     pub views: i64,
     pub hits: i64,
 }
 
+#[derive(serde::Serialize)]
 pub struct FolderRecordPartial {
     pub id: i32,
     pub name: String,
 }
 
+#[derive(serde::Serialize)]
 pub struct FolderRecord {
     pub id: i32,
     pub name: String,

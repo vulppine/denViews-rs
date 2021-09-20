@@ -59,7 +59,7 @@ impl DatabaseTools {
 
         let page_rows = conn.query(
             "
-            SELECT page_id, page_name, path_id
+            SELECT page_name, path_id
             FROM pages
             INNER JOIN folders
             ON pages.folder_id = folders.folder_id
@@ -69,12 +69,12 @@ impl DatabaseTools {
         ).await?;
 
         for row in page_rows {
-            let path_id: i32 = row.get(2);
+            let path_id: i32 = row.get(1);
 
             let views = conn.query_one(
                 format!(
                 "
-                SELECT total_views, total_hits
+                SELECT view_count, hit_count
                 FROM path_{}
                 ",
                 path_id
@@ -83,8 +83,7 @@ impl DatabaseTools {
             ).await?;
 
             pages.push(ViewRecord {
-                id: row.get(0),
-                page: row.get(1),
+                page: row.get(0),
                 views: views.get(0),
                 hits: views.get(1)
             });
@@ -114,23 +113,23 @@ impl DatabaseTools {
         })
     }
 
-    pub async fn get_page(&self, page_id: i32) -> Result<ViewRecord, Error> {
+    pub async fn get_page(&self, folder_id: i32, page_name: String) -> Result<ViewRecord, Error> {
         let conn = self.db_pool.get().await?;
 
         let page = conn.query_one(
             "
-            SELECT page_name, path_id
+            SELECT path_id
             FROM pages
-            WHERE page_id = $1
+            WHERE folder_id = $1 AND page_name = $2
             ",
-            &[&page_id]
+            &[&folder_id, &page_name]
         ).await?;
-        let path_id: i32 = page.get(1);
+        let path_id: i32 = page.get(0);
 
         let page_views = conn.query_one(
             format!(
             "
-            SELECT total_views, total_hits
+            SELECT view_count, hit_count
             FROM path_{}
             ",
             path_id).as_str(),
@@ -138,8 +137,7 @@ impl DatabaseTools {
         ).await?;
 
         Ok(ViewRecord {
-            id: page_id,
-            page: page.get(0),
+            page: page_name,
             views: page_views.get(0),
             hits: page_views.get(1)
         })
@@ -152,14 +150,14 @@ impl DatabaseTools {
     //
     // TODO: Find out a way to delete the path views related to
     // deleting folders!!!
-    pub async fn delete_folder(&self, folder_name: &str) -> Result<(), Error> {
+    pub async fn delete_folder(&self, folder_id: i32) -> Result<(), Error> {
         let conn = self.db_pool.get().await?;
 
         conn.execute("
             DELETE FROM folders
-            WHERE folder_name = $1
+            WHERE folder_id = $1
             ",
-            &[&folder_name]
+            &[&folder_id]
         ).await?;
 
         Ok(())
@@ -168,24 +166,24 @@ impl DatabaseTools {
     // delete_page
     //
     // Deletes a single page from the database.
-    pub async fn delete_page(&self, page_id: u32) -> Result<(), Error> {
+    pub async fn delete_page(&self, folder_id: i32, page_name: String) -> Result<(), Error> {
         let conn = self.db_pool.get().await?;
 
         let path_id: i32 = conn.query_one(
             "
             SELECT path_id
             FROM pages
-            WHERE page_id = $1
+            WHERE page_name = $1 AND folder_id = $2
             ",
-            &[&page_id]
+            &[&page_name, &folder_id]
         ).await?.get(0);
 
         conn.execute(
             "
             DELETE FROM pages
-            WHERE page_id = $1
+            WHERE page_name = $1 AND folder_id = $2
             ",
-            &[&page_id]
+            &[&page_name, &folder_id]
         ).await?;
 
         conn.execute(

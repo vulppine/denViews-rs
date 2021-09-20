@@ -7,9 +7,9 @@ use hyper::{
 use std::{net::SocketAddr, sync::Arc};
 use super::tools::ToolsHandler;
 
-pub struct APIHandler<'a> {
+pub struct APIHandler {
     db: Arc<ViewManager>,
-    tools: ToolsHandler<'a>,
+    tools: ToolsHandler,
     settings: Arc<DenViewSettings>,
     init_check: bool, // lazy, find a better way to do this
 }
@@ -33,8 +33,8 @@ impl std::fmt::Display for APIError {
     }
 }
 
-impl<'a> APIHandler<'a> {
-    pub async fn new() -> Result<self::APIHandler<'a>, Error> {
+impl APIHandler {
+    pub async fn new() -> Result<Self, Error> {
         // this assumes your DB server and this application server are on
         // the same network, and the DB server is otherwise inaccessible from
         // the outside without some kind of VPN/gateway into the network
@@ -69,14 +69,14 @@ impl<'a> APIHandler<'a> {
         self.settings.clone()
     }
 
-    pub async fn execute(&self, mut req: APIRequest) -> Result<Response<Body>, Error> {
+    pub async fn execute(&self, req: APIRequest) -> Result<Response<Body>, Error> {
         println!("{:?}", req.req.uri());
         let path = self.path_as_vec(&req.req);
 
         if !self.init_check {
             return match (req.req.method(), path[0].as_str()) {
                 (&Method::GET, "_denViews_dash") | (&Method::POST, "_denViews_dash") => match req.auth {
-                    true => self.tools.handle(&mut req.req).await,
+                    true => self.tools.handle(req.req).await,
                     false => Ok(Response::builder()
                         .status(401)
                         .body(Body::from("You are not authorized."))?)
@@ -96,7 +96,7 @@ impl<'a> APIHandler<'a> {
                     .body(Body::from("Resource grabbing is not implemented yet."))?)
             }
             (&Method::GET, "_denViews_dash") | (&Method::POST, "_denViews_dash") => match req.auth {
-                true => self.tools.handle(&mut req.req).await,
+                true => self.tools.handle(req.req).await,
                 false => Ok(Response::builder()
                     .status(401)
                     .body(Body::from("You are not authorized."))?),
