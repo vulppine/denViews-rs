@@ -1,4 +1,4 @@
-use crate::database::*;
+use crate::database::{DenViewSettings, view_manager::*};
 use crate::Error;
 use hyper::{
     header::{LOCATION, USER_AGENT},
@@ -8,9 +8,9 @@ use std::{net::SocketAddr, sync::Arc};
 use super::tools::ToolsHandler;
 
 pub struct APIHandler<'a> {
-    db: Arc<DatabaseClient>,
+    db: Arc<ViewManager>,
     tools: ToolsHandler<'a>,
-    settings: Arc<DatabaseSettings>,
+    settings: Arc<DenViewSettings>,
     init_check: bool, // lazy, find a better way to do this
 }
 
@@ -44,12 +44,13 @@ impl<'a> APIHandler<'a> {
         let pool_amount = std::env::var("DENVIEWS_POOL_AMOUNT")
             .unwrap_or_else(|_| "16".to_string())
             .parse::<u32>()?;
-        let db = Arc::new(DatabaseClient::new(
+        let db = Arc::new(ViewManager::new(
             pool_amount,
             format!("postgresql://{1}:{2}@{0}", host, user, pass).parse()?,
         )
         .await?);
-        let init_check = db.check().await?;
+        let tools = ToolsHandler::new(db.clone(), format!("postgresql://{1}:{2}@{0}", host, user, pass).parse()?).await?;
+        let init_check = tools.check().await?;
 
         if !init_check {
             println!("!!!-- denViews MUST be set up before it is ready! Visit https://[host]/_denViews_dash/init and fill out the form! --!!!");
@@ -57,15 +58,14 @@ impl<'a> APIHandler<'a> {
 
         let settings = match init_check {
             true => Arc::new(db.get_settings().await?),
-            false => Arc::new(DatabaseSettings::default())
+            false => Arc::new(DenViewSettings::default())
         };
 
-        let tools = ToolsHandler::new(db.clone());
 
         Ok(APIHandler { db, tools, settings, init_check })
     }
 
-    pub fn settings(&self) -> Arc<DatabaseSettings> {
+    pub fn settings(&self) -> Arc<DenViewSettings> {
         self.settings.clone()
     }
 
@@ -103,20 +103,20 @@ impl<'a> APIHandler<'a> {
             },
 
             (&Method::POST, "_denViews_flush") => match req.auth {
-                true => self.db_op(DatabaseOperation::Flush, false).await,
-                false => Ok(Response::builder().status(401).body(Body::from(""))?),
+                true => self.db_op(ViewManagerOperation::Flush, false).await,
+                false => Ok(Response::builder().status(401).body(Body::from("You are not authorized."))?),
             },
 
             (&Method::GET, _) => {
                 self.db_op(
-                    DatabaseOperation::Get(path.join("/").trim_end_matches('/')),
+                    ViewManagerOperation::Get(path.join("/").trim_end_matches('/')),
                     true,
                 )
                 .await
             }
             (&Method::POST, _) => {
                 self.db_op(
-                    DatabaseOperation::UpdatePage(
+                    ViewManagerOperation::UpdatePage(
                         path.join("/").trim_end_matches('/'),
                         // will the EU scream at me for this? :eye:
                         &(req.ip.ip().to_string()
@@ -138,8 +138,7 @@ impl<'a> APIHandler<'a> {
                 .split('/')
                 .map(|p| p.to_string())
                 .collect::<Vec<String>>();
-            let path_len = path.len();
-            if self.settings.ignore_queries {
+            let path_len = path.len(); if self.settings.ignore_queries {
                 if let Some(q) = p.query() {
                     path[path_len - 1] = [&path[path.len() - 1], q].join("?");
                 }
@@ -155,10 +154,10 @@ impl<'a> APIHandler<'a> {
         path
     }
 
-    async fn db_op(&self, op: DatabaseOperation<'_>, check: bool) -> Result<Response<Body>, Error> {
+    async fn db_op(&self, op: ViewManagerOperation<'_>, check: bool) -> Result<Response<Body>, Error> {
         println!("running operation: {:?}", op);
         match op {
-            DatabaseOperation::Get(p) | DatabaseOperation::UpdatePage(p, _) => {
+            ViewManagerOperation::Get(p) | ViewManagerOperation::UpdatePage(p, _) => {
                 if check {
                     let check = self.check_site(p).await;
                     match check {
