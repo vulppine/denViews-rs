@@ -1,11 +1,11 @@
-use crate::database::{DenViewSettings, view_manager::*};
+use super::tools::ToolsHandler;
+use crate::database::{view_manager::*, DenViewSettings};
 use crate::Error;
 use hyper::{
     header::{LOCATION, USER_AGENT},
     Body, Client, Method, Request, Response, Uri,
 };
 use std::{net::SocketAddr, sync::Arc};
-use super::tools::ToolsHandler;
 
 pub struct APIHandler {
     db: Arc<ViewManager>,
@@ -22,7 +22,7 @@ pub struct APIRequest {
 
 #[derive(Debug)]
 pub struct APIError {
-    reason: String
+    reason: String,
 }
 
 impl std::error::Error for APIError {}
@@ -44,12 +44,18 @@ impl APIHandler {
         let pool_amount = std::env::var("DENVIEWS_POOL_AMOUNT")
             .unwrap_or_else(|_| "16".to_string())
             .parse::<u32>()?;
-        let db = Arc::new(ViewManager::new(
-            pool_amount,
+        let db = Arc::new(
+            ViewManager::new(
+                pool_amount,
+                format!("postgresql://{1}:{2}@{0}", host, user, pass).parse()?,
+            )
+            .await?,
+        );
+        let tools = ToolsHandler::new(
+            db.clone(),
             format!("postgresql://{1}:{2}@{0}", host, user, pass).parse()?,
         )
-        .await?);
-        let tools = ToolsHandler::new(db.clone(), format!("postgresql://{1}:{2}@{0}", host, user, pass).parse()?).await?;
+        .await?;
         let init_check = tools.check().await?;
 
         if !init_check {
@@ -58,11 +64,15 @@ impl APIHandler {
 
         let settings = match init_check {
             true => Arc::new(db.get_settings().await?),
-            false => Arc::new(DenViewSettings::default())
+            false => Arc::new(DenViewSettings::default()),
         };
 
-
-        Ok(APIHandler { db, tools, settings, init_check })
+        Ok(APIHandler {
+            db,
+            tools,
+            settings,
+            init_check,
+        })
     }
 
     pub fn settings(&self) -> Arc<DenViewSettings> {
@@ -75,36 +85,37 @@ impl APIHandler {
 
         if !self.init_check {
             return match (req.req.method(), path[0].as_str()) {
-                (&Method::GET, "_denViews_dash") | (&Method::POST, "_denViews_dash") => match req.auth {
-                    true => self.tools.handle(req.req).await,
-                    false => Ok(Response::builder()
-                        .status(401)
-                        .body(Body::from("You are not authorized."))?)
+                (&Method::GET, "_denViews_dash") | (&Method::POST, "_denViews_dash") => {
+                    match req.auth {
+                        true => self.tools.handle(req.req).await,
+                        false => Ok(Response::builder()
+                            .status(401)
+                            .body(Body::from("You are not authorized."))?),
+                    }
                 }
 
-                _ => Ok(Response::builder()
-                    .status(500)
-                    .body(Body::from("denViews has not been initialized yet, or there is a settings error."))?)
-            }
+                _ => Ok(Response::builder().status(500).body(Body::from(
+                    "denViews has not been initialized yet, or there is a settings error.",
+                ))?),
+            };
         }
 
         match (req.req.method(), path[0].as_str()) {
             // TODO: Analytical dashboard for the database. (andauthorizatiomethod)
-            (&Method::GET, "favicon.ico") | (&Method::GET, "_denViews_res") => {
-                Ok(Response::builder()
-                    .status(404)
-                    .body(Body::from("Resource grabbing is not implemented yet."))?)
+            (&Method::GET, "_denViews_dash") | (&Method::POST, "_denViews_dash") => {
+                match req.auth {
+                    true => self.tools.handle(req.req).await,
+                    false => Ok(Response::builder()
+                        .status(401)
+                        .body(Body::from("You are not authorized."))?),
+                }
             }
-            (&Method::GET, "_denViews_dash") | (&Method::POST, "_denViews_dash") => match req.auth {
-                true => self.tools.handle(req.req).await,
-                false => Ok(Response::builder()
-                    .status(401)
-                    .body(Body::from("You are not authorized."))?),
-            },
 
             (&Method::POST, "_denViews_flush") => match req.auth {
                 true => self.db_op(ViewManagerOperation::Flush, false).await,
-                false => Ok(Response::builder().status(401).body(Body::from("You are not authorized."))?),
+                false => Ok(Response::builder()
+                    .status(401)
+                    .body(Body::from("You are not authorized."))?),
             },
 
             (&Method::GET, _) => {
@@ -138,7 +149,8 @@ impl APIHandler {
                 .split('/')
                 .map(|p| p.to_string())
                 .collect::<Vec<String>>();
-            let path_len = path.len(); if self.settings.ignore_queries {
+            let path_len = path.len();
+            if self.settings.ignore_queries {
                 if let Some(q) = p.query() {
                     path[path_len - 1] = [&path[path.len() - 1], q].join("?");
                 }
@@ -154,17 +166,27 @@ impl APIHandler {
         path
     }
 
-    async fn db_op(&self, op: ViewManagerOperation<'_>, check: bool) -> Result<Response<Body>, Error> {
+    async fn db_op(
+        &self,
+        op: ViewManagerOperation<'_>,
+        check: bool,
+    ) -> Result<Response<Body>, Error> {
         println!("running operation: {:?}", op);
         match op {
             ViewManagerOperation::Get(p) | ViewManagerOperation::UpdatePage(p, _) => {
                 if check {
                     let check = self.check_site(p).await;
                     match check {
-                        Err(e) => return Ok(Response::builder().status(500).body(Body::from(e.to_string()))?),
+                        Err(e) => {
+                            return Ok(Response::builder()
+                                .status(500)
+                                .body(Body::from(e.to_string()))?)
+                        }
                         Ok(v) => {
                             if !v.0 {
-                                return Ok(Response::builder().status(500).body(Body::from(v.1))?);
+                                return Ok(Response::builder()
+                                    .status(500)
+                                    .body(Body::from(v.1))?);
                             }
                         }
                     };
@@ -199,7 +221,9 @@ impl APIHandler {
         let tracking = self.settings.site.parse::<Uri>()?.into_parts();
 
         if tracking.authority.is_none() {
-            return Err(Box::new(APIError { reason: "no authority found in tracking url".into() }));
+            return Err(Box::new(APIError {
+                reason: "no authority found in tracking url".into(),
+            }));
         }
 
         let uri = Uri::builder()

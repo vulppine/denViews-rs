@@ -1,4 +1,4 @@
-use crate::dashboard::*;
+use crate::dashboard;
 use crate::database::{database_tools::DatabaseTools, view_manager::*, DenViewSettings, *};
 use crate::Error;
 use bb8_postgres::tokio_postgres::config::Config;
@@ -8,7 +8,6 @@ use std::sync::Arc;
 pub struct ToolsHandler {
     db: Arc<ViewManager>,
     tools: Arc<DatabaseTools>,
-    pages: PageManager,
 }
 
 #[derive(serde::Deserialize)]
@@ -24,12 +23,9 @@ struct FolderQuery {
 
 impl ToolsHandler {
     pub async fn new(db: Arc<ViewManager>, config: Config) -> Result<Self, Error> {
-        let pages = PageManager::new()?;
-
         Ok(ToolsHandler {
             db,
             tools: Arc::new(DatabaseTools::new(config).await?),
-            pages,
         })
     }
 
@@ -73,10 +69,26 @@ impl ToolsHandler {
                         .body(Body::from("Not found."))?,
                     false => self.db_op(req, &path[2]).await?,
                 },
-                p => self.get_page(p).await?,
+                "res" => Response::builder()
+                    .status(404)
+                    .body(Body::from("Resource grabbing is not implemented yet."))?,
+                p => self.get_resource(p)?,
             },
 
             (&Method::POST, p) => match p {
+                "api" => match path.len() < 3 {
+                    true => Response::builder()
+                        .status(404)
+                        .body(Body::from("Not found."))?,
+                    false => self.db_op(req, &path[2]).await?,
+                },
+
+                _ => Response::builder()
+                    .status(404)
+                    .body(Body::from("Not found."))?,
+            },
+
+            (&Method::DELETE, p) => match p {
                 "api" => match path.len() < 3 {
                     true => Response::builder()
                         .status(404)
@@ -95,16 +107,17 @@ impl ToolsHandler {
         })
     }
 
-    async fn get_page(&self, page_route: &str) -> Result<Response<Body>, Error> {
+    fn get_resource(&self, page_route: &str) -> Result<Response<Body>, Error> {
         Ok(match page_route {
-            "init" => match self.tools.check().await? {
-                false => Response::new(Body::from(self.pages.get(DashboardPage::Init).clone())),
-                true => Response::new(Body::from("denViews is already initialized.")),
+            "init" | "dash" => Response::new(Body::from(
+                dashboard::get_resource(&[page_route, "html"].join(".")).unwrap(),
+            )),
+            _ => match dashboard::get_resource(page_route) {
+                Some(p) => Response::new(Body::from(p)),
+                None => Response::builder()
+                    .status(404)
+                    .body(Body::from("Not found."))?,
             },
-
-            _ => Response::builder()
-                .status(404)
-                .body(Body::from("Not found."))?,
         })
     }
 
