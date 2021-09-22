@@ -170,7 +170,9 @@ impl ToolsHandler {
                     .status(400)
                     .body(Body::from("Malformed request."))?,
                 Some(v) => match &self.tools.get_folder(v.folder_id as i32).await {
-                    Ok(v) => Response::new(Body::from(serde_json::to_string(v)?)),
+                    Ok(v) => Response::builder()
+                        .header("Access-Control-Allow-Origin", "*")
+                        .body(Body::from(serde_json::to_string(v)?))?,
                     Err(e) => Response::builder().status(500).body(Body::from(format!(
                         "an error occurred during processing: {}",
                         e

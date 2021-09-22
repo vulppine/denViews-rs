@@ -5,16 +5,16 @@
 // similar to ViewManager's calls, but have more calls
 // that imply a need for permissions (e.g., updating settings).
 
+use super::*;
+use crate::Error;
 use bb8::Pool;
 use bb8_postgres::{
     tokio_postgres::{config::Config, NoTls, Row},
-    PostgresConnectionManager
+    PostgresConnectionManager,
 };
-use crate::Error;
-use super::*;
 
 pub struct DatabaseTools {
-    db_pool: Pool<PostgresConnectionManager<NoTls>>
+    db_pool: Pool<PostgresConnectionManager<NoTls>>,
 }
 
 impl DatabaseTools {
@@ -22,7 +22,8 @@ impl DatabaseTools {
         Ok(DatabaseTools {
             db_pool: Pool::builder()
                 .max_size(4) // just in case - maybe make this configurable later?
-                .build(PostgresConnectionManager::new(config, NoTls)).await?
+                .build(PostgresConnectionManager::new(config, NoTls))
+                .await?,
         })
     }
 
@@ -31,14 +32,19 @@ impl DatabaseTools {
         // At the moment, this is just to ensure that the database has a *settings* file,
         // and isn't some kind of validation check.
         let conn = self.db_pool.get().await?;
-        let check = conn.query_opt("SELECT setting FROM settings WHERE setting_name = 'schema_ver'", &[]).await;
+        let check = conn
+            .query_opt(
+                "SELECT setting FROM settings WHERE setting_name = 'schema_ver'",
+                &[],
+            )
+            .await;
 
         Ok(match check {
             Err(e) => {
                 println!("An error occurred while verifying the database. Returning is_init: false, in case it is not initialized. Error: {}", e);
                 false
             }
-            Ok(r) => r.is_some()
+            Ok(r) => r.is_some(),
         })
     }
 
@@ -48,55 +54,83 @@ impl DatabaseTools {
         let mut pages: Vec<ViewRecord> = Vec::new();
         let mut folders: Vec<FolderRecordPartial> = Vec::new();
 
-        let folder_name: String = conn.query_one(
-            "
-            SELECT folder_name
+        let folder = conn
+            .query_one(
+                "
+            SELECT folder_name, parent_id
             FROM folders
             WHERE folder_id = $1
             ",
-            &[&folder_id]
-        ).await?.get(0);
+                &[&folder_id],
+            )
+            .await?;
 
-        let page_rows = conn.query(
-            "
+        let folder_name: String = folder.get(0);
+        let folder_parent: Option<i32> = folder.get(1);
+
+        let mut page_rows = conn
+            .query(
+                "
             SELECT page_name, path_id
             FROM pages
             INNER JOIN folders
             ON pages.folder_id = folders.folder_id
             WHERE folders.folder_id = $1
             ",
-            &[&folder_id]
-        ).await?;
+                &[&folder_id],
+            )
+            .await?;
+
+        if let Some(id) = folder_parent {
+            if let Some(r) = conn
+                .query_opt(
+                    "
+                SELECT 'self' AS page_name, path_id
+                FROM pages
+                WHERE folder_id = $1 AND page_name = $2
+                ",
+                    &[&id, &folder_name],
+                )
+                .await?
+            {
+                page_rows.push(r);
+            }
+        }
 
         for row in page_rows {
             let path_id: i32 = row.get(1);
 
-            let views = conn.query_one(
-                format!(
-                "
+            let views = conn
+                .query_one(
+                    format!(
+                        "
                 SELECT view_count, hit_count
                 FROM path_{}
                 ",
-                path_id
-                ).as_str(),
-                &[]
-            ).await?;
+                        path_id
+                    )
+                    .as_str(),
+                    &[],
+                )
+                .await?;
 
             pages.push(ViewRecord {
                 page: row.get(0),
                 views: views.get(0),
-                hits: views.get(1)
+                hits: views.get(1),
             });
         }
 
-        let folder_rows = conn.query(
-            "
+        let folder_rows = conn
+            .query(
+                "
             SELECT folder_id, folder_name
             FROM folders
             WHERE parent_id = $1
             ",
-            &[&folder_id]
-        ).await?;
+                &[&folder_id],
+            )
+            .await?;
 
         for folder in folder_rows {
             folders.push(FolderRecordPartial {
@@ -109,37 +143,43 @@ impl DatabaseTools {
             id: folder_id,
             name: folder_name,
             folders,
-            pages
+            pages,
         })
     }
 
     pub async fn get_page(&self, folder_id: i32, page_name: String) -> Result<ViewRecord, Error> {
         let conn = self.db_pool.get().await?;
 
-        let page = conn.query_one(
-            "
+        let page = conn
+            .query_one(
+                "
             SELECT path_id
             FROM pages
             WHERE folder_id = $1 AND page_name = $2
             ",
-            &[&folder_id, &page_name]
-        ).await?;
+                &[&folder_id, &page_name],
+            )
+            .await?;
         let path_id: i32 = page.get(0);
 
-        let page_views = conn.query_one(
-            format!(
-            "
+        let page_views = conn
+            .query_one(
+                format!(
+                    "
             SELECT view_count, hit_count
             FROM path_{}
             ",
-            path_id).as_str(),
-            &[]
-        ).await?;
+                    path_id
+                )
+                .as_str(),
+                &[],
+            )
+            .await?;
 
         Ok(ViewRecord {
             page: page_name,
             views: page_views.get(0),
-            hits: page_views.get(1)
+            hits: page_views.get(1),
         })
     }
 
@@ -153,12 +193,14 @@ impl DatabaseTools {
     pub async fn delete_folder(&self, folder_id: i32) -> Result<(), Error> {
         let conn = self.db_pool.get().await?;
 
-        conn.execute("
+        conn.execute(
+            "
             DELETE FROM folders
             WHERE folder_id = $1
             ",
-            &[&folder_id]
-        ).await?;
+            &[&folder_id],
+        )
+        .await?;
 
         Ok(())
     }
@@ -169,32 +211,38 @@ impl DatabaseTools {
     pub async fn delete_page(&self, folder_id: i32, page_name: String) -> Result<(), Error> {
         let conn = self.db_pool.get().await?;
 
-        let path_id: i32 = conn.query_one(
-            "
+        let path_id: i32 = conn
+            .query_one(
+                "
             SELECT path_id
             FROM pages
             WHERE page_name = $1 AND folder_id = $2
             ",
-            &[&page_name, &folder_id]
-        ).await?.get(0);
+                &[&page_name, &folder_id],
+            )
+            .await?
+            .get(0);
 
         conn.execute(
             "
             DELETE FROM pages
             WHERE page_name = $1 AND folder_id = $2
             ",
-            &[&page_name, &folder_id]
-        ).await?;
+            &[&page_name, &folder_id],
+        )
+        .await?;
 
         conn.execute(
             "
             DELETE FROM paths
             WHERE path_id = $1
             ",
-            &[&path_id]
-        ).await?;
+            &[&path_id],
+        )
+        .await?;
 
-        conn.execute(format!("DROP VIEW path_{}", path_id).as_str(), &[]).await?;
+        conn.execute(format!("DROP VIEW path_{}", path_id).as_str(), &[])
+            .await?;
 
         Ok(())
     }
@@ -208,8 +256,9 @@ impl DatabaseTools {
             SET setting = $1
             WHERE setting_name = 'current_settings'
             ",
-            &[&serde_json::to_value(settings)?]
-        ).await?;
+            &[&serde_json::to_value(settings)?],
+        )
+        .await?;
 
         Ok(())
     }
@@ -219,8 +268,9 @@ impl DatabaseTools {
 
         let transaction = conn.transaction().await?;
 
-        transaction.execute(
-            "
+        transaction
+            .execute(
+                "
             CREATE TABLE folders (
                 folder_id INT PRIMARY KEY GENERATED BY DEFAULT AS IDENTITY,
                 parent_id INT,
@@ -230,28 +280,34 @@ impl DatabaseTools {
                     REFERENCES folders (folder_id)
             )
             ",
-            &[],
-        ).await?;
-        transaction.execute(
-            "
+                &[],
+            )
+            .await?;
+        transaction
+            .execute(
+                "
             INSERT INTO folders
             VALUES (0, null, '')
             ",
-            &[],
-        ).await?;
+                &[],
+            )
+            .await?;
 
-        transaction.execute(
-            "
+        transaction
+            .execute(
+                "
             CREATE TABLE paths (
                 path_id INT PRIMARY KEY GENERATED BY DEFAULT AS IDENTITY,
                 path TEXT NOT NULL
             )
             ",
-            &[],
-        ).await?;
+                &[],
+            )
+            .await?;
 
-        transaction.execute(
-            "
+        transaction
+            .execute(
+                "
             CREATE TABLE pages (
                 page_id INT PRIMARY KEY GENERATED BY DEFAULT AS IDENTITY,
                 folder_id INT NOT NULL,
@@ -268,20 +324,24 @@ impl DatabaseTools {
                     REFERENCES paths (path_id)
             )
             ",
-            &[],
-        ).await?;
+                &[],
+            )
+            .await?;
 
-        transaction.execute(
-            "
+        transaction
+            .execute(
+                "
             CREATE TABLE visitors (
                 visitor_id TEXT PRIMARY KEY
             )
             ",
-            &[],
-        ).await?;
+                &[],
+            )
+            .await?;
 
-        transaction.execute(
-            "
+        transaction
+            .execute(
+                "
             CREATE TABLE page_visitors (
                 page_id INT NOT NULL,
                 visitor_id TEXT NOT NULL,
@@ -294,11 +354,13 @@ impl DatabaseTools {
                     REFERENCES visitors (visitor_id)
             )
             ",
-            &[],
-        ).await?;
+                &[],
+            )
+            .await?;
 
-        transaction.execute(
-            "
+        transaction
+            .execute(
+                "
             CREATE VIEW
                 total_views (page_id, view_count, hit_count)
             AS
@@ -316,29 +378,42 @@ impl DatabaseTools {
                 LEFT JOIN pages
                 ON view_count.page_id = pages.page_id
             ",
-            &[],
-        ).await?;
+                &[],
+            )
+            .await?;
 
-        transaction.execute("CREATE TABLE salt (salt TEXT NOT NULL)", &[]).await?;
+        transaction
+            .execute("CREATE TABLE salt (salt TEXT NOT NULL)", &[])
+            .await?;
         let salt = util::create_salt();
 
-        transaction.execute("INSERT INTO salt (salt) VALUES ($1)", &[&salt]).await?;
+        transaction
+            .execute("INSERT INTO salt (salt) VALUES ($1)", &[&salt])
+            .await?;
 
-        transaction.execute(
-            "
+        transaction
+            .execute(
+                "
             CREATE TABLE settings (
                 setting_name TEXT PRIMARY KEY,
                 setting JSON
             )
             ",
-            &[]
-        ).await?;
-        transaction.execute("INSERT INTO settings VALUES ('schema_ver', '1'::JSON)", &[]).await?;
-        transaction.execute("INSERT INTO settings VALUES ('current_settings', $1)", &[&serde_json::to_value(settings)?]).await?;
+                &[],
+            )
+            .await?;
+        transaction
+            .execute("INSERT INTO settings VALUES ('schema_ver', '1'::JSON)", &[])
+            .await?;
+        transaction
+            .execute(
+                "INSERT INTO settings VALUES ('current_settings', $1)",
+                &[&serde_json::to_value(settings)?],
+            )
+            .await?;
 
         transaction.commit().await?;
 
         Ok(())
-
     }
 }

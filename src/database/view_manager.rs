@@ -6,19 +6,19 @@
 // authentication/higher permissions should be the Flush
 // and Init operations.
 
+use super::util;
+use super::{DenViewSettings, ViewRecord};
 use crate::util::base64::*;
 use crate::Error;
-use crypto::digest::Digest;
-use crypto::sha3::Sha3;
 use bb8::Pool;
 use bb8_postgres::{
     tokio_postgres::{config::Config, NoTls, Row},
     PostgresConnectionManager,
 };
+use crypto::digest::Digest;
+use crypto::sha3::Sha3;
 use rand::{rngs::StdRng, Rng, SeedableRng};
 use std::time::SystemTime;
-use super::{ViewRecord, DenViewSettings};
-use super::util;
 
 pub struct ViewManager {
     db_pool: Pool<PostgresConnectionManager<NoTls>>,
@@ -78,11 +78,15 @@ impl ViewManager {
         Ok(ViewManager {
             db_pool: Pool::builder()
                 .max_size(pool_size)
-                .build(PostgresConnectionManager::new(config, NoTls)).await?
+                .build(PostgresConnectionManager::new(config, NoTls))
+                .await?,
         })
     }
 
-    pub async fn execute(&self, op: &ViewManagerOperation<'_>) -> Result<Option<ViewRecord>, Error> {
+    pub async fn execute(
+        &self,
+        op: &ViewManagerOperation<'_>,
+    ) -> Result<Option<ViewRecord>, Error> {
         match op {
             ViewManagerOperation::Get(path) => Ok(Some(self.get_page_info(path).await?)),
             ViewManagerOperation::UpdatePage(path, info) => {
@@ -98,7 +102,7 @@ impl ViewManager {
             ViewManagerOperation::Flush => {
                 self.flush().await?;
                 Ok(None)
-            },
+            }
             /*
             ViewManagerOperation::Init(s) => {
                 self.init(s).await?;
@@ -115,15 +119,18 @@ impl ViewManager {
         // any other result is completely wrong
 
         let path_id: i32 = conn
-            .query_one("SELECT path_id FROM paths WHERE path = $1", &[&path]).await?
+            .query_one("SELECT path_id FROM paths WHERE path = $1", &[&path])
+            .await?
             .get(0);
 
         // This is only safe because of the path_id abstraction that occurs.
         // This should not be replicated in any other circumstance.
-        let record = conn.query_one(
-            format!("SELECT view_count, hit_count FROM path_{}", path_id).as_str(),
-            &[],
-        ).await?;
+        let record = conn
+            .query_one(
+                format!("SELECT view_count, hit_count FROM path_{}", path_id).as_str(),
+                &[],
+            )
+            .await?;
 
         Ok(ViewRecord {
             page: path.to_string(),
@@ -148,7 +155,8 @@ impl ViewManager {
                     )
                 ",
                 &[&path],
-            ).await?
+            )
+            .await?
             .unwrap_or(self.create_page(path).await?)
             .get(0);
 
@@ -160,15 +168,18 @@ impl ViewManager {
 
         // optional! this is because if the visitor doesn't already exist, it is instead
         // added into the visitors table
-        let visitor = conn.query_opt(
-            "SELECT visitor_id FROM visitors WHERE visitor_id = $1",
-            &[&visitor_hash],
-        ).await?;
+        let visitor = conn
+            .query_opt(
+                "SELECT visitor_id FROM visitors WHERE visitor_id = $1",
+                &[&visitor_hash],
+            )
+            .await?;
 
         if let Some(v) = visitor {
             let id: String = v.get(0);
-            let page_visitor = conn.query_opt(
-                "
+            let page_visitor = conn
+                .query_opt(
+                    "
                     SELECT
                         visitor_id,
                         page_id,
@@ -176,8 +187,9 @@ impl ViewManager {
                     FROM page_visitors
                     WHERE visitor_id = $1 AND page_id = $2
                     ",
-                &[&id, &page_id],
-            ).await?;
+                    &[&id, &page_id],
+                )
+                .await?;
 
             if let Some(p) = page_visitor {
                 let hits: i32 = p.get(2);
@@ -188,22 +200,26 @@ impl ViewManager {
                     WHERE visitor_id = $1 AND page_id = $2
                     ",
                     &[&id, &page_id, &(hits + 1)],
-                ).await?;
+                )
+                .await?;
             } else {
                 conn.execute(
                     "INSERT INTO page_visitors (visitor_id, page_id) VALUES ($1, $2)",
                     &[&id, &page_id],
-                ).await?;
+                )
+                .await?;
             }
         } else {
             conn.execute(
                 "INSERT INTO visitors (visitor_id) VALUES ($1)",
                 &[&visitor_hash],
-            ).await?;
+            )
+            .await?;
             conn.execute(
                 "INSERT INTO page_visitors (visitor_id, page_id) VALUES ($1, $2)",
                 &[&visitor_hash, &page_id],
-            ).await?;
+            )
+            .await?;
         }
 
         Ok(())
@@ -217,10 +233,12 @@ impl ViewManager {
     async fn create_page(&self, path: &str) -> Result<Row, Error> {
         let conn = self.db_pool.get().await?;
 
-        let row = conn.query_opt(
-            "SELECT * FROM pages WHERE path_id = (SELECT path_id FROM paths WHERE path = $1)",
-            &[&path],
-        ).await?;
+        let row = conn
+            .query_opt(
+                "SELECT * FROM pages WHERE path_id = (SELECT path_id FROM paths WHERE path = $1)",
+                &[&path],
+            )
+            .await?;
 
         if let Some(r) = row {
             return Ok(r);
@@ -230,12 +248,13 @@ impl ViewManager {
             .query_one(
                 "INSERT INTO paths (path) VALUES ($1) RETURNING path_id",
                 &[&path],
-            ).await?
+            )
+            .await?
             .get(0);
 
         let parts = match path.len() {
             0 => vec![""],
-            _ => path.split('/').collect::<Vec<&str>>()
+            _ => path.split('/').collect::<Vec<&str>>(),
         };
         /*
         if parts.len() == 1 {
@@ -249,16 +268,18 @@ impl ViewManager {
 
         let mut last_part_id = 0i32;
         for part in parts[..parts.len() - 1].iter() {
-            let folder: Option<Row> = conn.query_opt(
-                "
+            let folder: Option<Row> = conn
+                .query_opt(
+                    "
                 SELECT
                     folder_id,
                     parent_id
                 FROM folders
                 WHERE folder_name = $1 AND parent_id = $2
                 ",
-                &[&part, &last_part_id],
-            ).await?;
+                    &[&part, &last_part_id],
+                )
+                .await?;
 
             if let Some(r) = folder {
                 last_part_id = r.get(0);
@@ -267,27 +288,29 @@ impl ViewManager {
 
             last_part_id = conn
                 .query_one(
-                    "INSERT INTO folders (folder_name) VALUES ($1) RETURNING folder_id",
-                    &[&part],
+                    "INSERT INTO folders (folder_name, parent_id) VALUES ($1, $2) RETURNING folder_id",
+                    &[&part, &last_part_id],
                 ).await?
                 .get(0);
         }
 
-        let row = conn.query_one(
-            "
+        let row = conn
+            .query_one(
+                "
             INSERT INTO
                 pages (folder_id, path_id, page_name, first_visited)
             VALUES
                 ($1, $2, $3, $4)
             RETURNING
                 page_id",
-            &[
-                &last_part_id,
-                &path_id,
-                &parts[parts.len() - 1],
-                &SystemTime::now(),
-            ],
-        ).await?;
+                &[
+                    &last_part_id,
+                    &path_id,
+                    &parts[parts.len() - 1],
+                    &SystemTime::now(),
+                ],
+            )
+            .await?;
 
         conn.execute(
             format!(
@@ -318,7 +341,8 @@ impl ViewManager {
             )
             .as_str(),
             &[],
-        ).await?;
+        )
+        .await?;
 
         Ok(row)
     }
@@ -334,30 +358,36 @@ impl ViewManager {
             let views: i64 = page.get(1);
             let hits: i64 = page.get(2);
 
-            transaction.execute(
-                "
+            transaction
+                .execute(
+                    "
                 UPDATE pages
                 SET
                     total_views = $1,
                     total_hits = $2
                 WHERE page_id = $3
                 ",
-                &[&views, &hits, &id],
-            ).await?;
+                    &[&views, &hits, &id],
+                )
+                .await?;
 
-            transaction.execute(
-                "
+            transaction
+                .execute(
+                    "
                 DELETE FROM page_visitors
                 WHERE page_id = $1
                 ",
-                &[&id],
-            ).await?;
+                    &[&id],
+                )
+                .await?;
         }
 
         let salt = util::create_salt();
 
         transaction.execute("DELETE FROM salt", &[]).await?;
-        transaction.execute("INSERT INTO salt (salt) VALUES ($1)", &[&salt]).await?;
+        transaction
+            .execute("INSERT INTO salt (salt) VALUES ($1)", &[&salt])
+            .await?;
 
         transaction.execute("DELETE FROM visitors", &[]).await?;
         transaction.commit().await?;
@@ -368,14 +398,19 @@ impl ViewManager {
     pub async fn get_settings(&self) -> Result<DenViewSettings, Error> {
         let conn = self.db_pool.get().await?;
 
-        let settings = conn.query_opt("SELECT setting FROM settings WHERE setting_name = 'current_settings'", &[]).await;
+        let settings = conn
+            .query_opt(
+                "SELECT setting FROM settings WHERE setting_name = 'current_settings'",
+                &[],
+            )
+            .await;
 
         match settings {
             Err(_) => Ok(DenViewSettings::default()),
             Ok(v) => match v {
                 Some(s) => Ok(serde_json::from_value(s.get(0))?),
-                None => Ok(DenViewSettings::default())
-            }
+                None => Ok(DenViewSettings::default()),
+            },
         }
     }
 }

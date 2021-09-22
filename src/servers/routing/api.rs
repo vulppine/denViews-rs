@@ -197,7 +197,9 @@ impl APIHandler {
                         .status(500)
                         .body(Body::from(format!("error running {:?}: {}", op, e)))?),
                     Ok(r) => match r {
-                        Some(r) => Ok(Response::new(Body::from(serde_json::to_string(&r)?))),
+                        Some(r) => Ok(Response::builder()
+                            .header("Access-Control-Allow-Origin", "*")
+                            .body(Body::from(serde_json::to_string(&r)?))?),
                         None => Ok(Response::new(Body::from(""))),
                     },
                 }
