@@ -1,6 +1,6 @@
-pub mod view_manager;
 pub mod database_tools;
 mod util;
+pub mod view_manager;
 
 // COMMON STRUCTS
 #[derive(serde::Serialize)]
@@ -19,6 +19,7 @@ pub struct FolderRecordPartial {
 #[derive(serde::Serialize)]
 pub struct FolderRecord {
     pub id: i32,
+    pub parent_id: Option<i32>,
     pub name: String,
     pub folders: Vec<FolderRecordPartial>,
     pub pages: Vec<ViewRecord>,
@@ -29,5 +30,5 @@ pub struct DenViewSettings {
     pub site: String,
     pub use_https: bool,
     pub ignore_queries: bool,
-    pub remove_index_pages: bool
+    pub remove_index_pages: bool,
 }

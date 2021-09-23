@@ -141,6 +141,7 @@ impl DatabaseTools {
 
         Ok(FolderRecord {
             id: folder_id,
+            parent_id: folder_parent,
             name: folder_name,
             folders,
             pages,
