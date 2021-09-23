@@ -30,6 +30,11 @@ PartialFolderList.propTypes = { folders: PropTypes.array }
 const PartialFolderInfo = (props) =>
   <span><FolderLink folderID={props.id} /> | {props.name}</span>
 
+PartialFolderInfo.propTypes = {
+  id: PropTypes.number,
+  name: PropTypes.string
+}
+
 const PageInfoList = (props) =>
   <ul>
     {props.pages.map((e) =>
@@ -41,8 +46,18 @@ PageInfoList.propTypes = { pages: PropTypes.array }
 const PageInfo = (props) =>
   <span>{props.page} | Views: {props.views} | Hits: {props.hits}</span>
 
+PageInfo.propTypes = {
+  page: PropTypes.string,
+  views: PropTypes.number,
+  hits: PropTypes.number
+}
+
 const FolderLink = (props) =>
   <a href={'?folder_id=' + props.folderID}>{props.folderID}</a>
+
+FolderLink.propTypes = {
+  folderID: PropTypes.number
+}
 
 FolderConsumer.propTypes = {
   data: {

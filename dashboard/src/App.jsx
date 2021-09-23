@@ -1,7 +1,9 @@
 import { hot } from 'react-hot-loader'
 import React from 'react'
+import PropTypes from 'prop-types'
 import FolderDisplayer from './Folders'
-import ViewDisplayer from './Pages'
+import JSONForm from './Forms'
+// import ViewDisplayer from './Pages'
 import './App.css'
 
 class FolderChooser extends React.Component {
@@ -25,7 +27,7 @@ class FolderChooser extends React.Component {
         <form>
           <label>
             Folder ID:
-            <input type='text' onChange={this.handleChangeFolder} value={this.state.folderID} />
+            <input type='number' onChange={this.handleChangeFolder} value={this.state.folderID} />
           </label>
         </form>
       </div>
@@ -33,11 +35,17 @@ class FolderChooser extends React.Component {
   }
 }
 
+FolderChooser.propTypes = {
+  folderID: PropTypes.number
+}
+
 function App () {
   const uri = new URL(document.URL)
+  const folderID = uri.searchParams.get('folder_id') === null ? 0 : uri.searchParams.get('folder_id')
   return (
     <div className='App'>
-      <FolderChooser folderID={uri.searchParams.get('folder_id')} />
+      <FolderChooser folderID={folderID} />
+      <JSONForm data={{ test: 'test', test2: 2, test3: false }} method='POST' />
     </div>
   )
 }

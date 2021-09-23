@@ -248,6 +248,29 @@ impl DatabaseTools {
         Ok(())
     }
 
+    pub async fn get_settings(&self) -> Result<DenViewSettings, Error> {
+        let conn = self.db_pool.get().await?;
+
+        match self.check().await {
+            Err(e) => Err(e),
+            Ok(v) => match v {
+                false => Ok(DenViewSettings::default()),
+                true => Ok(serde_json::from_value(
+                    conn.query_one(
+                        "
+                    SELECT setting
+                    FROM settings
+                    WHERE setting_name = 'current_settings'
+                    ",
+                        &[],
+                    )
+                    .await?
+                    .get(0),
+                )?),
+            },
+        }
+    }
+
     pub async fn update_settings(&self, settings: DenViewSettings) -> Result<(), Error> {
         let conn = self.db_pool.get().await?;
 

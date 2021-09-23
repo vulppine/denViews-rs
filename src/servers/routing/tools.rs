@@ -72,7 +72,7 @@ impl ToolsHandler {
                 "res" => Response::builder()
                     .status(404)
                     .body(Body::from("Resource grabbing is not implemented yet."))?,
-                p => self.get_resource(p)?,
+                _ => self.get_resource(&path[1..].join("/"))?,
             },
 
             (&Method::POST, p) => match p {
@@ -205,6 +205,11 @@ impl ToolsHandler {
                 },
             },
 
+            (&Method::GET, "settings") => Response::builder()
+                .header("Access-Control-Allow-Origin", "*")
+                .body(Body::from(serde_json::to_string(
+                    &self.tools.get_settings().await?,
+                )?))?,
             (&Method::POST, "settings") => {
                 match serde_qs::from_bytes::<'_, DenViewSettings>(&to_bytes(req.body_mut()).await?)
                 {
