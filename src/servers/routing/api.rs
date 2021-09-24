@@ -80,7 +80,7 @@ impl APIHandler {
     }
 
     pub async fn execute(&self, req: APIRequest) -> Result<Response<Body>, Error> {
-        println!("{:?} {:?}", req.req.method(), req.req.uri());
+        log::info!("{:?} {:?}", req.req.method(), req.req.uri());
         let path = self.path_as_vec(&req.req);
 
         if !self.init_check {
@@ -167,7 +167,7 @@ impl APIHandler {
         op: ViewManagerOperation<'_>,
         check: bool,
     ) -> Result<Response<Body>, Error> {
-        println!("running operation: {:?}", op);
+        log::info!("running operation: {:?}", op);
         match op {
             ViewManagerOperation::Get(p) | ViewManagerOperation::UpdatePage(p, _) => {
                 if check {
@@ -229,11 +229,11 @@ impl APIHandler {
             .authority(tracking.authority.unwrap())
             .path_and_query(String::from("/") + path)
             .build()?;
-        println!("{:?}", uri);
+        log::info!("checking {:?}", uri);
         let https = hyper_rustls::HttpsConnector::with_webpki_roots();
         let client = Client::builder().build::<_, Body>(https);
         let check = client.get(uri).await;
-        println!("{:?}", check);
+        log::debug!("{:?}", check);
 
         match check {
             Err(e) => Ok((false, e.to_string())),

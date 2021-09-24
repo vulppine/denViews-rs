@@ -8,7 +8,6 @@
 
 use super::util;
 use super::{DenViewSettings, ViewRecord};
-use crate::util::base64::*;
 use crate::Error;
 use bb8::Pool;
 use bb8_postgres::{
@@ -17,7 +16,6 @@ use bb8_postgres::{
 };
 use crypto::digest::Digest;
 use crypto::sha3::Sha3;
-use rand::{rngs::StdRng, Rng, SeedableRng};
 use std::time::SystemTime;
 
 pub struct ViewManager {
@@ -102,13 +100,12 @@ impl ViewManager {
             ViewManagerOperation::Flush => {
                 self.flush().await?;
                 Ok(None)
-            }
-            /*
-            ViewManagerOperation::Init(s) => {
-                self.init(s).await?;
-                Ok(None)
-            }
-            */
+            } /*
+              ViewManagerOperation::Init(s) => {
+                  self.init(s).await?;
+                  Ok(None)
+              }
+              */
         }
     }
 
@@ -140,6 +137,7 @@ impl ViewManager {
     }
 
     async fn append_visitor(&self, path: &str, visitor_info: &str) -> Result<(), Error> {
+        log::debug!("recording new visitor");
         let conn = self.db_pool.get().await?;
 
         // either get a page ID, or create it
@@ -231,6 +229,7 @@ impl ViewManager {
     // If the path length is one, however, it will just create a page record,
     // and assume that the path category is the root of the website.
     async fn create_page(&self, path: &str) -> Result<Row, Error> {
+        log::info!("inserting {} into database now...", path);
         let conn = self.db_pool.get().await?;
 
         let row = conn
@@ -348,11 +347,11 @@ impl ViewManager {
     }
 
     async fn flush(&self) -> Result<(), Error> {
+        log::info!("flushing page_visitors to database now...");
         let mut conn = self.db_pool.get().await?;
 
         let views = conn.query("SELECT * FROM total_views", &[]).await?;
         let transaction = conn.transaction().await?;
-
         for page in views {
             let id: i32 = page.get(0);
             let views: i64 = page.get(1);

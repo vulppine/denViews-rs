@@ -9,7 +9,7 @@ use super::*;
 use crate::Error;
 use bb8::Pool;
 use bb8_postgres::{
-    tokio_postgres::{config::Config, NoTls, Row},
+    tokio_postgres::{config::Config, NoTls},
     PostgresConnectionManager,
 };
 
@@ -293,10 +293,12 @@ impl DatabaseTools {
     }
 
     pub async fn init(&self, settings: DenViewSettings) -> Result<(), Error> {
+        log::info!("!!! CREATING DATABASE NOW !!!");
         let mut conn = self.db_pool.get().await?;
 
         let transaction = conn.transaction().await?;
 
+        log::info!("creating table folders");
         transaction
             .execute(
                 "
@@ -311,6 +313,8 @@ impl DatabaseTools {
                 &[],
             )
             .await?;
+
+        log::info!("inserting root folder");
         transaction
             .execute(
                 "
@@ -321,6 +325,7 @@ impl DatabaseTools {
             )
             .await?;
 
+        log::info!("creating table paths");
         transaction
             .execute(
                 "
@@ -333,6 +338,7 @@ impl DatabaseTools {
             )
             .await?;
 
+        log::info!("creating table pages");
         transaction
             .execute(
                 "
@@ -354,6 +360,7 @@ impl DatabaseTools {
             )
             .await?;
 
+        log::info!("creating table visitors");
         transaction
             .execute(
                 "
@@ -366,6 +373,7 @@ impl DatabaseTools {
             )
             .await?;
 
+        log::info!("creating many-many relationship between pages and visitors");
         transaction
             .execute(
                 "
@@ -383,6 +391,7 @@ impl DatabaseTools {
             )
             .await?;
 
+        log::info!("creating view total_views");
         transaction
             .execute(
                 "
@@ -407,6 +416,7 @@ impl DatabaseTools {
             )
             .await?;
 
+        log::info!("creating salt");
         transaction
             .execute("CREATE TABLE salt (salt TEXT NOT NULL)", &[])
             .await?;
@@ -416,6 +426,7 @@ impl DatabaseTools {
             .execute("INSERT INTO salt (salt) VALUES ($1)", &[&salt])
             .await?;
 
+        log::info!("creating table settings");
         transaction
             .execute(
                 "
@@ -437,8 +448,10 @@ impl DatabaseTools {
             )
             .await?;
 
+        log::info!("committing to database");
         transaction.commit().await?;
 
+        log::info!("!!! DATABASE CREATION COMPLETE !!!");
         Ok(())
     }
 }

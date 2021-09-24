@@ -70,9 +70,10 @@ impl ToolsHandler {
                         .body(Body::from("Not found."))?,
                     false => self.db_op(req, &path[2]).await?,
                 },
-                "res" => Response::builder()
-                    .status(404)
-                    .body(Body::from("Resource grabbing is not implemented yet."))?,
+                "" => Response::builder()
+                    .status(301)
+                    .header(hyper::header::LOCATION, "/_denViews_dash/dash")
+                    .body(Body::from(""))?,
                 _ => self.get_resource(&path[1..].join("/")).await?,
             },
 
@@ -135,6 +136,11 @@ impl ToolsHandler {
         mut req: Request<Body>,
         api_route: &str,
     ) -> Result<Response<Body>, Error> {
+        log::info!(
+            "running through route {} (method: {:?}) now",
+            api_route,
+            req.method()
+        );
         Ok(match (req.method(), api_route) {
             (&Method::POST, "init") => {
                 match self.tools.check().await? {
@@ -150,7 +156,7 @@ impl ToolsHandler {
                             Ok(v) => v,
                         };
 
-                        println!("{:?}", settings);
+                        log::debug!("{:?}", settings);
                         match self.tools.init(settings).await {
                         Ok(_) => Response::new(Body::from("denViews successfully initialized. Restart denViews to track sites.")),
                         Err(e) => Response::builder()
