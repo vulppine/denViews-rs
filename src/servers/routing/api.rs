@@ -1,3 +1,4 @@
+use super::response_utils;
 use super::tools::ToolsHandler;
 use crate::database::{view_manager::*, DenViewSettings};
 use crate::Error;
@@ -51,11 +52,9 @@ impl APIHandler {
             )
             .await?,
         );
-        let tools = ToolsHandler::new(
-            db.clone(),
-            format!("postgresql://{1}:{2}@{0}", host, user, pass).parse()?,
-        )
-        .await?;
+        let tools =
+            ToolsHandler::new(format!("postgresql://{1}:{2}@{0}", host, user, pass).parse()?)
+                .await?;
         let init_check = tools.check().await?;
 
         if !init_check {
@@ -79,6 +78,10 @@ impl APIHandler {
         self.settings.clone()
     }
 
+    pub async fn auth(&self, user: String, pass: String) -> Result<bool, Error> {
+        self.tools.auth(user, pass).await
+    }
+
     pub async fn execute(&self, req: APIRequest) -> Result<Response<Body>, Error> {
         log::info!("{:?} {:?}", req.req.method(), req.req.uri());
         let path = self.path_as_vec(&req.req);
@@ -87,14 +90,12 @@ impl APIHandler {
             return match (req.req.method(), path[0].as_str()) {
                 (_, "_denViews_dash") => match req.auth {
                     true => self.tools.handle(req.req).await,
-                    false => Ok(Response::builder()
-                        .status(401)
-                        .body(Body::from("You are not authorized."))?),
+                    false => Ok(response_utils::request_auth!()),
                 },
 
-                _ => Ok(Response::builder().status(500).body(Body::from(
-                    "denViews has not been initialized yet, or there is a settings error.",
-                ))?),
+                _ => Ok(response_utils::internal_error!(
+                    "denViews has not been initialized yet"
+                )),
             };
         }
 
@@ -102,16 +103,12 @@ impl APIHandler {
             // TODO: Analytical dashboard for the database. (andauthorizatiomethod)
             (_, "_denViews_dash") => match req.auth {
                 true => self.tools.handle(req.req).await,
-                false => Ok(Response::builder()
-                    .status(401)
-                    .body(Body::from("You are not authorized."))?),
+                false => Ok(response_utils::request_auth!()),
             },
 
             (&Method::POST, "_denViews_flush") => match req.auth {
                 true => self.db_op(ViewManagerOperation::Flush, false).await,
-                false => Ok(Response::builder()
-                    .status(401)
-                    .body(Body::from("You are not authorized."))?),
+                false => Ok(response_utils::request_auth!()),
             },
 
             (&Method::GET, _) => {
@@ -134,7 +131,7 @@ impl APIHandler {
                 .await
             }
 
-            _ => Ok(Response::builder().status(405).body(Body::from(""))?),
+            _ => Ok(response_utils::response_with_code!(405)),
         }
     }
 
@@ -173,41 +170,36 @@ impl APIHandler {
                 if check {
                     let check = self.check_site(p).await;
                     match check {
-                        Err(e) => {
-                            return Ok(Response::builder()
-                                .status(500)
-                                .body(Body::from(e.to_string()))?)
-                        }
+                        Err(e) => return Ok(response_utils::internal_error!(e)),
                         Ok(v) => {
                             if !v.0 {
-                                return Ok(Response::builder()
-                                    .status(500)
-                                    .body(Body::from(v.1))?);
+                                return Ok(response_utils::internal_error!(v.1));
                             }
                         }
                     };
                 }
 
                 match self.db.execute(&op).await {
-                    Err(e) => Ok(Response::builder()
-                        .status(500)
-                        .body(Body::from(format!("error running {:?}: {}", op, e)))?),
+                    Err(e) => Ok(response_utils::internal_error!(format!(
+                        "{:?} error: {}",
+                        op, e
+                    ))),
                     Ok(r) => match r {
                         Some(r) => Ok(Response::builder()
                             .header("Access-Control-Allow-Origin", "*")
                             .body(Body::from(serde_json::to_string(&r)?))?),
-                        None => Ok(Response::new(Body::from(""))),
+                        None => Ok(response_utils::ok!()),
                     },
                 }
             }
 
             _ => match self.db.execute(&op).await {
                 Ok(_) => Ok(Response::new(Body::from(""))),
-                Err(e) => Ok(Response::builder().status(500).body(Body::from(format!(
+                Err(e) => Ok(response_utils::internal_error!(format!(
                     "error performing operation {:?}: {}",
                     &op,
                     e.to_string()
-                )))?),
+                ))),
             },
         }
     }

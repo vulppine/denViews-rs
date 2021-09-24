@@ -1,3 +1,4 @@
+use super::response_utils;
 use crate::dashboard;
 use crate::database::{database_tools::DatabaseTools, view_manager::*, DenViewSettings, *};
 use crate::Error;
@@ -6,7 +7,6 @@ use hyper::{body::to_bytes, Body, Method, Request, Response, Uri};
 use std::sync::Arc;
 
 pub struct ToolsHandler {
-    db: Arc<ViewManager>,
     tools: Arc<DatabaseTools>,
 }
 
@@ -22,15 +22,18 @@ struct FolderQuery {
 }
 
 impl ToolsHandler {
-    pub async fn new(db: Arc<ViewManager>, config: Config) -> Result<Self, Error> {
+    pub async fn new(config: Config) -> Result<Self, Error> {
         Ok(ToolsHandler {
-            db,
             tools: Arc::new(DatabaseTools::new(config).await?),
         })
     }
 
     pub async fn check(&self) -> Result<bool, Error> {
         self.tools.check().await
+    }
+
+    pub async fn auth(&self, user: String, pass: String) -> Result<bool, Error> {
+        self.tools.auth(user, pass).await
     }
 
     pub async fn handle(&self, req: Request<Body>) -> Result<Response<Body>, Error> {
@@ -41,9 +44,7 @@ impl ToolsHandler {
             .collect::<Vec<String>>();
 
         if path[0] != "_denViews_dash" {
-            return Ok(Response::builder()
-                .status(401)
-                .body(Body::from("Unauthorized access to tools."))?);
+            return Ok(response_utils::response_with_code!(401, "unauthorized"));
         }
 
         if path.len() < 2 {
@@ -57,17 +58,13 @@ impl ToolsHandler {
         // dash/[page]
         // or dash/api/[endpoint]
         if path.len() > 4 {
-            return Ok(Response::builder()
-                .status(404)
-                .body(Body::from("Not found."))?);
+            return Ok(response_utils::not_found!());
         }
 
         Ok(match (req.method(), path[1].as_str()) {
             (&Method::GET, p) => match p {
                 "api" => match path.len() < 3 {
-                    true => Response::builder()
-                        .status(404)
-                        .body(Body::from("Not found."))?,
+                    true => response_utils::not_found!(),
                     false => self.db_op(req, &path[2]).await?,
                 },
                 "" => Response::builder()
@@ -79,54 +76,44 @@ impl ToolsHandler {
 
             (&Method::POST, p) => match p {
                 "api" => match path.len() < 3 {
-                    true => Response::builder()
-                        .status(404)
-                        .body(Body::from("Not found."))?,
+                    true => response_utils::not_found!(),
                     false => self.db_op(req, &path[2]).await?,
                 },
 
-                _ => Response::builder()
-                    .status(404)
-                    .body(Body::from("Not found."))?,
+                _ => response_utils::not_found!(),
             },
 
             (&Method::DELETE, p) => match p {
                 "api" => match path.len() < 3 {
-                    true => Response::builder()
-                        .status(404)
-                        .body(Body::from("Not found."))?,
+                    true => response_utils::not_found!(),
                     false => self.db_op(req, &path[2]).await?,
                 },
 
-                _ => Response::builder()
-                    .status(404)
-                    .body(Body::from("Not found."))?,
+                _ => response_utils::not_found!(),
             },
 
-            _ => Response::builder()
-                .status(405)
-                .body(Body::from("Not allowed."))?,
+            _ => response_utils::response_with_code!(405, "not allowed"),
         })
     }
 
     async fn get_resource(&self, page_route: &str) -> Result<Response<Body>, Error> {
         Ok(match page_route {
             "init" => match self.tools.check().await? {
-                true => Response::builder()
-                    .status(400)
-                    .body(Body::from("denViews is already initialized."))?,
-                false => Response::new(Body::from(
-                    dashboard::get_resource(&[page_route, "html"].join(".")).unwrap(),
-                )),
+                true => {
+                    response_utils::response_with_code!(401, "denViews is already initialized.")
+                }
+                false => response_utils::ok!(dashboard::get_resource(
+                    &[page_route, "html"].join(".")
+                )
+                .unwrap()),
             },
-            "dash" | "settings" => Response::new(Body::from(
-                dashboard::get_resource(&[page_route, "html"].join(".")).unwrap(),
-            )),
+            "dash" | "settings" => response_utils::ok!(dashboard::get_resource(
+                &[page_route, "html"].join(".")
+            )
+            .unwrap()),
             _ => match dashboard::get_resource(page_route) {
-                Some(p) => Response::new(Body::from(p)),
-                None => Response::builder()
-                    .status(404)
-                    .body(Body::from("Not found."))?,
+                Some(p) => response_utils::ok!(p),
+                None => response_utils::not_found!(),
             },
         })
     }
@@ -142,111 +129,77 @@ impl ToolsHandler {
             req.method()
         );
         Ok(match (req.method(), api_route) {
+            (&Method::GET, "init") => match self.tools.check().await? {
+                false => response_utils::internal_error!("denViews is already initialized."),
+                true => response_utils::ok!(serde_json::to_string(&DenViewInit::default())?),
+            },
             (&Method::POST, "init") => {
                 match self.tools.check().await? {
                     false => {
-                        let res: Result<DenViewSettings, serde_qs::Error> =
+                        let res: Result<DenViewInit, serde_qs::Error> =
                             serde_qs::from_bytes(&to_bytes(req.body_mut()).await?);
                         let settings = match res {
-                            Err(e) => {
-                                return Ok(Response::builder().status(500).body(Body::from(
-                                    format!("An error occurred while initializing denViews: {}", e),
-                                ))?)
-                            }
+                            Err(e) => return Ok(response_utils::internal_error!(e)),
                             Ok(v) => v,
                         };
 
                         log::debug!("{:?}", settings);
                         match self.tools.init(settings).await {
-                        Ok(_) => Response::new(Body::from("denViews successfully initialized. Restart denViews to track sites.")),
-                        Err(e) => Response::builder()
-                            .status(500)
-                            .body(Body::from(format!("An error occurred while initializing denViews: {}", e)))?
-                    }
+                            Ok(_) => response_utils::ok!("denViews successfully initialized. Restart denViews to track sites."),
+                            Err(e) => response_utils::internal_error!(e)
+                        }
                     }
                     true => Response::new(Body::from("denViews is already initalized.")),
                 }
             }
 
             (&Method::GET, "page") => match query_to_struct::<PageQuery>(req.uri()) {
-                None => Response::builder()
-                    .status(400)
-                    .body(Body::from("Malformed request."))?,
+                None => response_utils::malformed!(),
                 Some(v) => match &self.tools.get_page(v.folder_id as i32, v.name).await {
-                    Ok(v) => Response::new(Body::from(serde_json::to_string(v)?)),
-                    Err(e) => Response::builder().status(500).body(Body::from(format!(
-                        "an error occurred during processing: {}",
-                        e
-                    )))?,
+                    Ok(v) => response_utils::ok!(serde_json::to_string(v)?),
+                    Err(e) => response_utils::internal_error!(e),
                 },
             },
             (&Method::GET, "folder") => match query_to_struct::<FolderQuery>(req.uri()) {
-                None => Response::builder()
-                    .status(400)
-                    .body(Body::from("Malformed request."))?,
+                None => response_utils::malformed!(),
                 Some(v) => match &self.tools.get_folder(v.folder_id as i32).await {
                     Ok(v) => Response::builder()
                         .header("Access-Control-Allow-Origin", "*")
                         .body(Body::from(serde_json::to_string(v)?))?,
-                    Err(e) => Response::builder().status(500).body(Body::from(format!(
-                        "an error occurred during processing: {}",
-                        e
-                    )))?,
+                    Err(e) => response_utils::internal_error!(e),
                 },
             },
 
             (&Method::DELETE, "page") => match query_to_struct::<PageQuery>(req.uri()) {
-                None => Response::builder()
-                    .status(400)
-                    .body(Body::from("Malformed request."))?,
+                None => response_utils::malformed!(),
                 Some(v) => match &self.tools.delete_page(v.folder_id as i32, v.name).await {
-                    Ok(v) => Response::new(Body::from(serde_json::to_string(v)?)),
-                    Err(e) => Response::builder().status(500).body(Body::from(format!(
-                        "an error occurred during processing: {}",
-                        e
-                    )))?,
+                    Ok(v) => response_utils::ok!(serde_json::to_string(v)?),
+                    Err(e) => response_utils::internal_error!(e),
                 },
             },
             (&Method::DELETE, "folder") => match query_to_struct::<FolderQuery>(req.uri()) {
-                None => Response::builder()
-                    .status(400)
-                    .body(Body::from("Malformed request."))?,
+                None => response_utils::malformed!(),
                 Some(v) => match &self.tools.delete_folder(v.folder_id as i32).await {
-                    Ok(v) => Response::new(Body::from(serde_json::to_string(v)?)),
-                    Err(e) => Response::builder().status(500).body(Body::from(format!(
-                        "an error occurred during processing: {}",
-                        e
-                    )))?,
+                    Ok(v) => response_utils::ok!(serde_json::to_string(v)?),
+                    Err(e) => response_utils::internal_error!(e),
                 },
             },
 
-            (&Method::GET, "settings") => Response::builder()
-                .header("Access-Control-Allow-Origin", "*")
-                .body(Body::from(serde_json::to_string(
-                    &self.tools.get_settings().await?,
-                )?))?,
+            (&Method::GET, "settings") => {
+                response_utils::ok!(serde_json::to_string(&self.tools.get_settings().await?)?)
+            }
             (&Method::POST, "settings") => {
                 match serde_qs::from_bytes::<'_, DenViewSettings>(&to_bytes(req.body_mut()).await?)
                 {
-                    Err(e) => Response::builder().status(500).body(Body::from(format!(
-                        "an error occurred during processing: {}",
-                        e
-                    )))?,
+                    Err(e) => response_utils::internal_error!(e),
                     Ok(s) => match self.tools.update_settings(s).await {
-                        Err(e) => Response::builder().status(500).body(Body::from(format!(
-                            "an error occurred during processing: {}",
-                            e
-                        )))?,
-                        Ok(_) => {
-                            Response::new(Body::from("settings updated - please restart denViews!"))
-                        }
+                        Err(e) => response_utils::internal_error!(e),
+                        Ok(_) => response_utils::ok!("settings updated - please restart denViews!"),
                     },
                 }
             }
 
-            _ => Response::builder()
-                .status(405)
-                .body(Body::from("Not allowed."))?,
+            _ => response_utils::response_with_code!(405, "Not allowed."),
         })
     }
 }

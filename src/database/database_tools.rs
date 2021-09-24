@@ -292,7 +292,44 @@ impl DatabaseTools {
         Ok(())
     }
 
-    pub async fn init(&self, settings: DenViewSettings) -> Result<(), Error> {
+    pub async fn auth(&self, user: String, pass: String) -> Result<bool, Error> {
+        let conn = self.db_pool.get().await?;
+
+        Ok(match self.check().await? {
+            false => (user == "denviews") && (pass == "denviews"),
+            true => {
+                let db_user: String = serde_json::from_value(
+                    conn.query_one(
+                        "
+                SELECT setting
+                FROM settings
+                WHERE setting_name = 'user'
+                ",
+                        &[],
+                    )
+                    .await?
+                    .get(0),
+                )?;
+
+                let db_pass: String = serde_json::from_value(
+                    conn.query_one(
+                        "
+                SELECT setting
+                FROM settings
+                WHERE setting_name = 'password'
+                ",
+                        &[],
+                    )
+                    .await?
+                    .get(0),
+                )?;
+
+                (user == db_user) && (pass == db_pass)
+            }
+        })
+    }
+
+    pub async fn init(&self, init: DenViewInit) -> Result<(), Error> {
         log::info!("!!! CREATING DATABASE NOW !!!");
         let mut conn = self.db_pool.get().await?;
 
@@ -443,8 +480,20 @@ impl DatabaseTools {
             .await?;
         transaction
             .execute(
+                "INSERT INTO settings VALUES ('user', $1)",
+                &[&serde_json::to_value(&init.user)?],
+            )
+            .await?;
+        transaction
+            .execute(
+                "INSERT INTO settings VALUES ('password', $1)",
+                &[&serde_json::to_value(&init.pass)?],
+            )
+            .await?;
+        transaction
+            .execute(
                 "INSERT INTO settings VALUES ('current_settings', $1)",
-                &[&serde_json::to_value(settings)?],
+                &[&serde_json::to_value(DenViewSettings::from(init))?],
             )
             .await?;
 

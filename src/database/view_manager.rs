@@ -60,17 +60,6 @@ pub enum ViewManagerOperation<'a> {
     Flush,
 }
 
-impl Default for DenViewSettings {
-    fn default() -> Self {
-        DenViewSettings {
-            site: "localhost".into(),
-            use_https: true,
-            ignore_queries: true,
-            remove_index_pages: true,
-        }
-    }
-}
-
 impl ViewManager {
     pub async fn new(pool_size: u32, config: Config) -> Result<Self, Error> {
         Ok(ViewManager {

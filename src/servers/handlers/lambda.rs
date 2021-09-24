@@ -216,11 +216,24 @@ async fn handle(
 ) -> Result<LambdaAPIGatewayResponse, Error> {
     let client = APIHandler::new().await?;
     let ip: SocketAddr = req.request_context.http.source_ip.parse()?;
+    let auth = match req.headers().get(hyper::header::AUTHORIZATION) {
+        None => false,
+        Some(v) => {
+            let userpass = v
+                .to_str()?
+                .split(':')
+                .map(|s| s.into())
+                .collect::<Vec<String>>();
+            client
+                .auth(userpass[0].clone(), userpass[1].clone())
+                .await?
+        }
+    };
     let resp = client
         .execute(APIRequest {
             req: req.into_request()?,
             ip,
-            auth: false,
+            auth,
         })
         .await?;
 

@@ -7,7 +7,7 @@ const InitForm = (props) => {
   const Form = utils.futureWrapper(
     JSONForm,
     utils.Loading,
-    utils.fetchFromApi('settings', null)
+    utils.fetchFromApi('init', null)
   )
 
   return <Form method='POST' action='/_denViews_dash/api/init' />

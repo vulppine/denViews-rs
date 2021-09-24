@@ -1,19 +1,19 @@
 use crate::servers::routing::api::{APIHandler, APIRequest};
-use async_stream::stream;
 use crate::Error;
+use async_stream::stream;
 use futures_core::Stream;
-use futures_util::{future::join, TryFutureExt};
+use futures_util::future::join;
 use hyper::{
-    server::accept::{Accept, from_stream},
-    server::conn::{AddrStream, Http},
+    server::accept::Accept,
+    server::conn::AddrStream,
     service::{make_service_fn, service_fn},
-    Body, Request, Response, Server, Uri
+    Body, Request, Response, Server, Uri,
 };
 use std::{
     convert::Infallible,
     fs::File,
     io,
-    io::{BufReader, Error as IoError},
+    io::BufReader,
     net::SocketAddr,
     pin::Pin,
     sync::Arc,
@@ -39,12 +39,8 @@ pub async fn serve() {
     let settings = &client.clone().settings();
 
     match settings.use_https {
-
         false => {
-            let addr = SocketAddr::from((
-                [127, 0, 0, 1],
-                80
-            ));
+            let addr = SocketAddr::from(([127, 0, 0, 1], 80));
 
             let service_wrapper = make_service_fn(move |conn: &AddrStream| {
                 let client = client.clone();
@@ -65,15 +61,8 @@ pub async fn serve() {
             Server::bind(&addr).serve(service_wrapper).await.unwrap();
         }
         true => {
-            let redirect_addr = SocketAddr::from((
-                [127, 0, 0, 1],
-                80
-            ));
-            let addr = SocketAddr::from((
-                [127, 0, 0, 1],
-                443
-            ));
-
+            let redirect_addr = SocketAddr::from(([127, 0, 0, 1], 80));
+            let addr = SocketAddr::from(([127, 0, 0, 1], 443));
 
             let certs = certs(&mut BufReader::new(
                 File::open(std::env::var("DENVIEWS_CERT").unwrap()).unwrap(),
@@ -107,29 +96,29 @@ pub async fn serve() {
             }));
 
             // TODO: Get the internal, current representation of the site's authority
-            let redirect_wrapper = make_service_fn(move |_: &AddrStream| {
-                async move {
-                    Ok::<_, Infallible>(service_fn(move |req: Request<Body>| {
-                        async move {
-                            Ok::<_, Infallible>(Response::builder()
-                                .status(301)
-                                .header("location", Uri::builder()
-                                        .scheme("https")
-                                        .authority(req.headers()[hyper::header::HOST].to_str().unwrap())
-                                        .path_and_query(match req.uri().path_and_query() {
-                                            Some(v) => v.as_str(),
-                                            None => ""
-                                        })
-                                        .build()
-                                        .unwrap()
-                                        .to_string())
-                                .body(Body::from(""))
-                                .unwrap()
-                            )}
-                    }))
-                }
+            let redirect_wrapper = make_service_fn(move |_: &AddrStream| async move {
+                Ok::<_, Infallible>(service_fn(move |req: Request<Body>| async move {
+                    Ok::<_, Infallible>(
+                        Response::builder()
+                            .status(301)
+                            .header(
+                                "location",
+                                Uri::builder()
+                                    .scheme("https")
+                                    .authority(req.headers()[hyper::header::HOST].to_str().unwrap())
+                                    .path_and_query(match req.uri().path_and_query() {
+                                        Some(v) => v.as_str(),
+                                        None => "",
+                                    })
+                                    .build()
+                                    .unwrap()
+                                    .to_string(),
+                            )
+                            .body(Body::from(""))
+                            .unwrap(),
+                    )
+                }))
             });
-
 
             let service_wrapper = make_service_fn(move |conn: &IncomingStream<_>| {
                 let client = client.clone();
@@ -137,21 +126,43 @@ pub async fn serve() {
                 async move {
                     Ok::<_, Error>(service_fn(move |req| {
                         let client = client.clone();
-                        let auth = ip.ip() == SocketAddr::from(([127, 0, 0, 1], 0)).ip();
+                        let local_auth = ip.ip() == SocketAddr::from(([127, 0, 0, 1], 0)).ip();
 
-                        async move { client.execute(APIRequest { req, ip, auth }).await }
+                        async move {
+                            let auth = match req.headers().get(hyper::header::AUTHORIZATION) {
+                                None => false,
+                                Some(v) => {
+                                    let userpass = v
+                                        .to_str()?
+                                        .split(':')
+                                        .map(|s| s.into())
+                                        .collect::<Vec<String>>();
+                                    client
+                                        .auth(userpass[0].clone(), userpass[1].clone())
+                                        .await?
+                                }
+                            } || local_auth;
+
+                            client.execute(APIRequest { req, ip, auth }).await
+                        }
                     }))
                 }
             });
 
-            let (res1, res2) = join(Server::builder(stream).serve(service_wrapper), Server::bind(&redirect_addr).serve(redirect_wrapper)).await;
+            let (res1, res2) = join(
+                Server::builder(stream).serve(service_wrapper),
+                Server::bind(&redirect_addr).serve(redirect_wrapper),
+            )
+            .await;
             res1.unwrap();
             res2.unwrap();
         }
     }
 }
 
-struct TlsStreamWrap(Pin<Box<dyn Stream<Item = Result<IncomingStream<TlsStream<TcpStream>>, io::Error>>>>);
+struct TlsStreamWrap(
+    Pin<Box<dyn Stream<Item = Result<IncomingStream<TlsStream<TcpStream>>, io::Error>>>>,
+);
 
 impl Accept for TlsStreamWrap {
     type Conn = IncomingStream<TlsStream<TcpStream>>;
@@ -167,13 +178,13 @@ impl Accept for TlsStreamWrap {
 
 struct IncomingStream<S: AsyncRead + AsyncWrite>(S, SocketAddr);
 
-impl <S: AsyncRead + AsyncWrite> IncomingStream<S> {
+impl<S: AsyncRead + AsyncWrite> IncomingStream<S> {
     fn ip(&self) -> SocketAddr {
         self.1
     }
 }
 
-impl <S: AsyncRead + AsyncWrite + Unpin>AsyncRead for IncomingStream<S> {
+impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for IncomingStream<S> {
     fn poll_read(
         mut self: Pin<&mut Self>,
         ctx: &mut Context<'_>,
@@ -183,7 +194,7 @@ impl <S: AsyncRead + AsyncWrite + Unpin>AsyncRead for IncomingStream<S> {
     }
 }
 
-impl <S: AsyncRead + AsyncWrite + Unpin>AsyncWrite for IncomingStream<S> {
+impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for IncomingStream<S> {
     fn poll_flush(mut self: Pin<&mut Self>, ctx: &mut Context<'_>) -> Poll<io::Result<()>> {
         Pin::new(&mut self.0).poll_flush(ctx)
     }
