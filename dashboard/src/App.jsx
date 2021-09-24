@@ -2,7 +2,6 @@ import { hot } from 'react-hot-loader'
 import React from 'react'
 import PropTypes from 'prop-types'
 import FolderDisplayer from './Folders'
-import JSONForm from './Forms'
 // import ViewDisplayer from './Pages'
 import './App.css'
 
@@ -45,7 +44,6 @@ function App () {
   return (
     <div className='App'>
       <FolderChooser folderID={folderID} />
-      <JSONForm data={{ test: 'test', test2: 2, test3: false }} method='POST' />
     </div>
   )
 }

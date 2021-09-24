@@ -10,4 +10,5 @@ pub async fn run() {
 
 #[cfg(feature = "aws-lambda")]
 pub async fn run() {
+    handlers::lambda::run().await;
 }

@@ -109,7 +109,7 @@ impl ToolsHandler {
 
     fn get_resource(&self, page_route: &str) -> Result<Response<Body>, Error> {
         Ok(match page_route {
-            "init" | "dash" => Response::new(Body::from(
+            "init" | "dash" | "settings" => Response::new(Body::from(
                 dashboard::get_resource(&[page_route, "html"].join(".")).unwrap(),
             )),
             _ => match dashboard::get_resource(page_route) {
@@ -222,7 +222,9 @@ impl ToolsHandler {
                             "an error occurred during processing: {}",
                             e
                         )))?,
-                        Ok(_) => Response::new(Body::from("settings updated")),
+                        Ok(_) => {
+                            Response::new(Body::from("settings updated - please restart denViews!"))
+                        }
                     },
                 }
             }

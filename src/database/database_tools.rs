@@ -311,7 +311,7 @@ impl DatabaseTools {
             .execute(
                 "
             INSERT INTO folders
-            VALUES (0, null, '')
+            VALUES (0, null, 'root')
             ",
                 &[],
             )

@@ -234,7 +234,7 @@ impl APIHandler {
             .path_and_query(String::from("/") + path)
             .build()?;
         println!("{:?}", uri);
-        let https = hyper_tls::HttpsConnector::new();
+        let https = hyper_rustls::HttpsConnector::with_webpki_roots();
         let client = Client::builder().build::<_, Body>(https);
         let check = client.get(uri).await;
         println!("{:?}", check);

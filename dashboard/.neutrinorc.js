@@ -13,6 +13,10 @@ module.exports = {
       init: {
         entry: 'init',
         title: 'denViews init'
+      },
+      settings: {
+        entry: 'settings',
+        title: 'denViews settings'
       }
     }
   },
