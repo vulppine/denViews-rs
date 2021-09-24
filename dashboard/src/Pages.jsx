@@ -4,16 +4,21 @@ import * as utils from './util'
 
 const ViewConsumer = (props) => {
   return (
-    <ul>
-      <li>Page: {props.data.page}</li>
-      <li>Views: {props.data.views}</li>
-      <li>Hits: {props.data.hits}</li>
-    </ul>
+    <div>
+      <h1>[#{props.data.id}] {props.data.page}</h1>
+      <p>In folder: <a href={'?folder_id=' + props.data.folder_id}>{props.data.folder_id}</a></p>
+      <ul>
+        <li>Views: {props.data.views}</li>
+        <li>Hits: {props.data.hits}</li>
+      </ul>
+    </div>
   )
 }
 
 ViewConsumer.propTypes = {
   data: {
+    id: PropTypes.number,
+    folder_id: PropTypes.number,
     page: PropTypes.string,
     views: PropTypes.number,
     hits: PropTypes.number

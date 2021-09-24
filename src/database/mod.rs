@@ -11,6 +11,16 @@ pub struct ViewRecord {
 }
 
 #[derive(serde::Serialize)]
+pub struct PageRecord {
+    pub id: i32,
+    pub path_id: i32,
+    pub folder_id: i32,
+    pub page: String,
+    pub views: i64,
+    pub hits: i64,
+}
+
+#[derive(serde::Serialize)]
 pub struct FolderRecordPartial {
     pub id: i32,
     pub name: String,

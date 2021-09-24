@@ -48,8 +48,9 @@ impl ToolsHandler {
 
         if path.len() < 2 {
             return Ok(Response::builder()
-                .status(404)
-                .body(Body::from("Dashboard not implemented yet."))?);
+                .status(301)
+                .header(hyper::header::LOCATION, "/_denViews_dash/dash")
+                .body(Body::from(""))?);
         }
 
         // yeah, a lot of this stuff is like either
@@ -72,7 +73,7 @@ impl ToolsHandler {
                 "res" => Response::builder()
                     .status(404)
                     .body(Body::from("Resource grabbing is not implemented yet."))?,
-                _ => self.get_resource(&path[1..].join("/"))?,
+                _ => self.get_resource(&path[1..].join("/")).await?,
             },
 
             (&Method::POST, p) => match p {
@@ -107,9 +108,17 @@ impl ToolsHandler {
         })
     }
 
-    fn get_resource(&self, page_route: &str) -> Result<Response<Body>, Error> {
+    async fn get_resource(&self, page_route: &str) -> Result<Response<Body>, Error> {
         Ok(match page_route {
-            "init" | "dash" | "settings" => Response::new(Body::from(
+            "init" => match self.tools.check().await? {
+                true => Response::builder()
+                    .status(400)
+                    .body(Body::from("denViews is already initialized."))?,
+                false => Response::new(Body::from(
+                    dashboard::get_resource(&[page_route, "html"].join(".")).unwrap(),
+                )),
+            },
+            "dash" | "settings" => Response::new(Body::from(
                 dashboard::get_resource(&[page_route, "html"].join(".")).unwrap(),
             )),
             _ => match dashboard::get_resource(page_route) {

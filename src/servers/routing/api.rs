@@ -80,19 +80,17 @@ impl APIHandler {
     }
 
     pub async fn execute(&self, req: APIRequest) -> Result<Response<Body>, Error> {
-        println!("{:?}", req.req.uri());
+        println!("{:?} {:?}", req.req.method(), req.req.uri());
         let path = self.path_as_vec(&req.req);
 
         if !self.init_check {
             return match (req.req.method(), path[0].as_str()) {
-                (&Method::GET, "_denViews_dash") | (&Method::POST, "_denViews_dash") => {
-                    match req.auth {
-                        true => self.tools.handle(req.req).await,
-                        false => Ok(Response::builder()
-                            .status(401)
-                            .body(Body::from("You are not authorized."))?),
-                    }
-                }
+                (_, "_denViews_dash") => match req.auth {
+                    true => self.tools.handle(req.req).await,
+                    false => Ok(Response::builder()
+                        .status(401)
+                        .body(Body::from("You are not authorized."))?),
+                },
 
                 _ => Ok(Response::builder().status(500).body(Body::from(
                     "denViews has not been initialized yet, or there is a settings error.",
@@ -102,14 +100,12 @@ impl APIHandler {
 
         match (req.req.method(), path[0].as_str()) {
             // TODO: Analytical dashboard for the database. (andauthorizatiomethod)
-            (&Method::GET, "_denViews_dash") | (&Method::POST, "_denViews_dash") => {
-                match req.auth {
-                    true => self.tools.handle(req.req).await,
-                    false => Ok(Response::builder()
-                        .status(401)
-                        .body(Body::from("You are not authorized."))?),
-                }
-            }
+            (_, "_denViews_dash") => match req.auth {
+                true => self.tools.handle(req.req).await,
+                false => Ok(Response::builder()
+                    .status(401)
+                    .body(Body::from("You are not authorized."))?),
+            },
 
             (&Method::POST, "_denViews_flush") => match req.auth {
                 true => self.db_op(ViewManagerOperation::Flush, false).await,

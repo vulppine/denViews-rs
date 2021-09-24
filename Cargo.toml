@@ -8,6 +8,16 @@ default = ["hosted"]
 aws-lambda = ["lambda_runtime"]
 hosted = []
 
+[[bin]]
+name = "bootstrap"
+path = "src/main.rs"
+required-features = ["aws-lambda"]
+
+[[bin]]
+name = "denviews"
+path = "src/main.rs"
+required-features = ["hosted"]
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
@@ -21,7 +31,6 @@ hyper = { version = "0.14.12", features = ["client", "server", "http1", "tcp", "
 hyper-rustls = { version = "0.22.1", features = ["webpki-roots"] }
 lambda_runtime = { version = "0.4", optional = true }
 log = "0.4.14"
-native-tls = "0.2"
 pin-project = "1.0.8"
 r2d2 = "0.8.9"
 r2d2_postgres = "0.18.1"
@@ -32,7 +41,6 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_qs = "0.8.4"
 tokio = { version = "1.11.0", features = ["full"] }
-tokio-native-tls = "0.3.0"
 tokio-rustls = "0.22.0"
 tracing = "0.1.26"
 tracing-subscriber = "0.2"

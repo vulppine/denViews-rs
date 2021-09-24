@@ -2,7 +2,7 @@ import { hot } from 'react-hot-loader'
 import React from 'react'
 import PropTypes from 'prop-types'
 import FolderDisplayer from './Folders'
-// import ViewDisplayer from './Pages'
+import ViewDisplayer from './Pages'
 import './App.css'
 
 class FolderChooser extends React.Component {
@@ -41,9 +41,14 @@ FolderChooser.propTypes = {
 function App () {
   const uri = new URL(document.URL)
   const folderID = uri.searchParams.get('folder_id') === null ? 0 : uri.searchParams.get('folder_id')
+  const pageName = uri.searchParams.get('page_name')
   return (
     <div className='App'>
-      <FolderChooser folderID={folderID} />
+      {
+        pageName === null
+          ? <FolderChooser folderID={folderID} />
+          : <ViewDisplayer folderID={folderID} pageName={pageName} />
+      }
     </div>
   )
 }
