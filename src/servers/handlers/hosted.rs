@@ -1,4 +1,5 @@
 use crate::servers::routing::api::{APIHandler, APIRequest};
+use crate::util::base64::base64_to_bytes;
 use crate::Error;
 use async_stream::stream;
 use futures_core::Stream;
@@ -126,20 +127,28 @@ pub async fn serve() {
                 async move {
                     Ok::<_, Error>(service_fn(move |req| {
                         let client = client.clone();
-                        let local_auth = ip.ip() == SocketAddr::from(([127, 0, 0, 1], 0)).ip();
+                        let local_auth = ip.ip() == SocketAddr::from(([127, 0, 0, 1], 0)).ip()
+                            && client.settings().always_auth_locally;
 
                         async move {
                             let auth = match req.headers().get(hyper::header::AUTHORIZATION) {
                                 None => false,
                                 Some(v) => {
-                                    let userpass = v
-                                        .to_str()?
-                                        .split(':')
-                                        .map(|s| s.into())
-                                        .collect::<Vec<String>>();
-                                    client
-                                        .auth(userpass[0].clone(), userpass[1].clone())
-                                        .await?
+                                    let auth_header = v.to_str()?.split(' ').collect::<Vec<&str>>();
+                                    match auth_header[0] == "Basic" {
+                                        false => false,
+                                        true => {
+                                            let userpass = String::from_utf8(base64_to_bytes(
+                                                auth_header[1].into(),
+                                            ))?
+                                            .split(':')
+                                            .map(|s| s.into())
+                                            .collect::<Vec<String>>();
+                                            client
+                                                .auth(userpass[0].clone(), userpass[1].clone())
+                                                .await?
+                                        }
+                                    }
                                 }
                             } || local_auth;
 

@@ -130,8 +130,8 @@ impl ToolsHandler {
         );
         Ok(match (req.method(), api_route) {
             (&Method::GET, "init") => match self.tools.check().await? {
-                false => response_utils::internal_error!("denViews is already initialized."),
-                true => response_utils::ok!(serde_json::to_string(&DenViewInit::default())?),
+                true => response_utils::internal_error!("denViews is already initialized."),
+                false => response_utils::ok!(serde_json::to_string(&DenViewInit::default())?),
             },
             (&Method::POST, "init") => {
                 match self.tools.check().await? {

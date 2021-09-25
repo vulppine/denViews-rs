@@ -6,12 +6,15 @@
 // that imply a need for permissions (e.g., updating settings).
 
 use super::*;
+use crate::util::base64::bytes_to_base64;
 use crate::Error;
 use bb8::Pool;
 use bb8_postgres::{
     tokio_postgres::{config::Config, NoTls},
     PostgresConnectionManager,
 };
+use crypto::digest::Digest;
+use crypto::sha3::Sha3;
 
 pub struct DatabaseTools {
     db_pool: Pool<PostgresConnectionManager<NoTls>>,
@@ -295,6 +298,10 @@ impl DatabaseTools {
     pub async fn auth(&self, user: String, pass: String) -> Result<bool, Error> {
         let conn = self.db_pool.get().await?;
 
+        let mut hasher = Sha3::sha3_256();
+        hasher.input_str(&pass);
+        let hashed_pass = hasher.result_str();
+
         Ok(match self.check().await? {
             false => (user == "denviews") && (pass == "denviews"),
             true => {
@@ -324,7 +331,7 @@ impl DatabaseTools {
                     .get(0),
                 )?;
 
-                (user == db_user) && (pass == db_pass)
+                (user == db_user) && (hashed_pass == db_pass)
             }
         })
     }
@@ -344,7 +351,7 @@ impl DatabaseTools {
                 parent_id INT
                     REFERENCES folders (folder_id)
                     ON DELETE CASCADE,
-                folder_name TEXT NOT NULL,
+                folder_name TEXT NOT NULL
             )
             ",
                 &[],
@@ -390,7 +397,7 @@ impl DatabaseTools {
                 page_name TEXT NOT NULL,
                 first_visited TIMESTAMP,
                 total_views BIGINT NOT NULL DEFAULT 0,
-                total_hits BIGINT NOT NULL DEFAULT 0,
+                total_hits BIGINT NOT NULL DEFAULT 0
             )
             ",
                 &[],
@@ -421,7 +428,7 @@ impl DatabaseTools {
                 visitor_id TEXT
                     REFERENCES visitors
                     ON DELETE SET DEFAULT,
-                visitor_hits INT NOT NULL DEFAULT 1,
+                visitor_hits INT NOT NULL DEFAULT 1
             )
             ",
                 &[],
@@ -484,10 +491,15 @@ impl DatabaseTools {
                 &[&serde_json::to_value(&init.user)?],
             )
             .await?;
+
+        let mut hasher = Sha3::sha3_256();
+        hasher.input_str(&init.pass);
+        let hashed_pass = hasher.result_str();
+
         transaction
             .execute(
                 "INSERT INTO settings VALUES ('password', $1)",
-                &[&serde_json::to_value(&init.pass)?],
+                &[&serde_json::to_value(&hashed_pass)?],
             )
             .await?;
         transaction

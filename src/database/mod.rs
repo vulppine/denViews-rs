@@ -41,6 +41,7 @@ pub struct DenViewSettings {
     pub use_https: bool,
     pub ignore_queries: bool,
     pub remove_index_pages: bool,
+    pub always_auth_locally: bool,
 }
 
 impl Default for DenViewSettings {
@@ -50,6 +51,7 @@ impl Default for DenViewSettings {
             use_https: true,
             ignore_queries: true,
             remove_index_pages: true,
+            always_auth_locally: false,
         }
     }
 }
@@ -61,6 +63,7 @@ impl From<DenViewInit> for DenViewSettings {
             use_https: init.use_https,
             ignore_queries: init.ignore_queries,
             remove_index_pages: init.remove_index_pages,
+            always_auth_locally: init.always_auth_locally,
         }
     }
 }
@@ -71,6 +74,7 @@ pub struct DenViewInit {
     pub use_https: bool,
     pub ignore_queries: bool,
     pub remove_index_pages: bool,
+    pub always_auth_locally: bool,
     pub user: String,
     pub pass: String,
 }
@@ -82,7 +86,8 @@ impl Default for DenViewInit {
             use_https: true,
             ignore_queries: true,
             remove_index_pages: true,
-            user: "".into(),
+            always_auth_locally: false,
+            user: "denviews".into(),
             pass: "".into(),
         }
     }

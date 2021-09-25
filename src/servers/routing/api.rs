@@ -173,6 +173,7 @@ impl APIHandler {
                         Err(e) => return Ok(response_utils::internal_error!(e)),
                         Ok(v) => {
                             if !v.0 {
+                                log::error!("error running site check on {}: {}", p, v.1);
                                 return Ok(response_utils::internal_error!(v.1));
                             }
                         }
@@ -217,12 +218,12 @@ impl APIHandler {
         }
 
         let uri = Uri::builder()
-            .scheme(tracking.scheme.unwrap_or(Scheme::try_from("http")?))
+            .scheme(tracking.scheme.unwrap_or(Scheme::try_from("https")?))
             .authority(tracking.authority.unwrap())
             .path_and_query(String::from("/") + path)
             .build()?;
         log::info!("checking {:?}", uri);
-        let https = hyper_rustls::HttpsConnector::with_webpki_roots();
+        let https = hyper_rustls::HttpsConnector::with_native_roots();
         let client = Client::builder().build::<_, Body>(https);
         let check = client.get(uri).await;
         log::debug!("{:?}", check);
@@ -234,6 +235,7 @@ impl APIHandler {
                 // to avoid any fuckery
                 if r.status().is_redirection() {
                     let redirect = r.headers()[LOCATION].to_str()?;
+                    log::info!("redirected, checking {}", redirect);
                     let result = client.get(redirect.parse()?).await;
                     return match result {
                         Err(e) => Ok((false, e.to_string())),
