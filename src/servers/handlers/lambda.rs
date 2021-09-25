@@ -219,8 +219,7 @@ async fn handle(
     let auth = match req.headers().get(hyper::header::AUTHORIZATION) {
         None => false,
         Some(v) => {
-            let userpass = v
-                .to_str()?
+            let userpass = String::from_utf8(base64_to_bytes(auth_header[1].into()))?
                 .split(':')
                 .map(|s| s.into())
                 .collect::<Vec<String>>();
