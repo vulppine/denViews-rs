@@ -1,7 +1,9 @@
 use crate::servers::routing::api::{APIHandler, APIRequest};
+use crate::util::base64::base64_to_bytes;
 use crate::Error;
 use hyper::header::{HeaderName, HeaderValue};
 use lambda_runtime as lambda;
+use serde_json::value::Value;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 // use lambda_runtime::{handler_fn, run, Context};
@@ -210,31 +212,139 @@ impl LambdaAPIGatewayResponse {
     }
 }
 
-async fn handle(
-    req: LambdaAPIGatewayRequest,
-    _: lambda::Context,
-) -> Result<LambdaAPIGatewayResponse, Error> {
-    let client = APIHandler::new().await?;
-    let ip: SocketAddr = req.request_context.http.source_ip.parse()?;
-    let auth = match req.headers().get(hyper::header::AUTHORIZATION) {
-        None => false,
-        Some(v) => {
-            let userpass = String::from_utf8(base64_to_bytes(auth_header[1].into()))?
-                .split(':')
-                .map(|s| s.into())
-                .collect::<Vec<String>>();
-            client
-                .auth(userpass[0].clone(), userpass[1].clone())
-                .await?
-        }
-    };
-    let resp = client
-        .execute(APIRequest {
-            req: req.into_request()?,
-            ip,
-            auth,
-        })
-        .await?;
+#[derive(serde::Deserialize)]
+struct EventBridgeEvent {
+    version: String,
+    id: String,
+    source: String,
+    account: String,
+    time: String,
+    region: String,
+    resources: Vec<String>,
+}
 
-    Ok(LambdaAPIGatewayResponse::from_response(resp).await?)
+#[derive(Debug)]
+struct HandlerError;
+
+impl std::error::Error for HandlerError {}
+
+impl std::fmt::Display for HandlerError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "an error occurred during handling - unknown")
+    }
+}
+
+async fn handle(req: Value, _: lambda::Context) -> Result<LambdaAPIGatewayResponse, Error> {
+    if let Ok(req) = serde_json::from_value::<LambdaAPIGatewayRequest>(req.clone()) {
+        let client = APIHandler::new().await?;
+        let ip: SocketAddr = req.request_context.http.source_ip.parse()?;
+        let always_auth = match req.stage_variables.get("always_auth") {
+            None => false,
+            Some(v) => v == "true",
+        };
+        let req = req.into_request()?;
+        let auth = match req.headers().get(hyper::header::AUTHORIZATION) {
+            None => false,
+            Some(v) => {
+                let auth_header = v.to_str()?.split(' ').collect::<Vec<&str>>();
+                match auth_header[0] == "Basic" {
+                    false => false,
+                    true => {
+                        let userpass = String::from_utf8(base64_to_bytes(auth_header[1].into()))?
+                            .split(':')
+                            .map(|s| s.into())
+                            .collect::<Vec<String>>();
+                        client
+                            .auth(userpass[0].clone(), userpass[1].clone())
+                            .await?
+                    }
+                }
+            }
+        } || always_auth;
+        let resp = client.execute(APIRequest { req, ip, auth }).await?;
+
+        return LambdaAPIGatewayResponse::from_response(resp).await;
+    }
+
+    if let Ok(event) = serde_json::from_value::<EventBridgeEvent>(req) {
+        if event.resources[0].as_str().contains("denViews_flush") {
+            let client = APIHandler::new().await?;
+            let req = hyper::Request::builder()
+                .method("POST")
+                .uri("/_denViews_flush")
+                .body(hyper::Body::from(""))
+                .unwrap();
+            let resp = client
+                .execute(APIRequest {
+                    req,
+                    ip: "0.0.0.0".parse()?,
+                    auth: true,
+                })
+                .await?;
+
+            return LambdaAPIGatewayResponse::from_response(resp).await;
+        }
+    }
+
+    Err(Box::new(HandlerError))
+
+    /*
+    match req["resources"] {
+        Value::Array(ref i) => match i[0] {
+            Value::String(ref s) => match s.as_str().contains("denViews_flush") {
+                true => {
+                    let client = APIHandler::new().await?;
+                    let req = hyper::Request::builder()
+                        .uri("/_denViews_flush")
+                        .body(hyper::Body::from(""))
+                        .unwrap();
+                    let resp = client
+                        .execute(APIRequest {
+                            req,
+                            ip: "0.0.0.0".parse()?,
+                            auth: true,
+                        })
+                        .await?;
+
+                    Ok(LambdaAPIGatewayResponse::from_response(resp).await?)
+                }
+                _ => Err(Box::new(HandlerError)),
+            },
+            _ => Err(Box::new(HandlerError)),
+        },
+        Value::Null => {
+            let req: LambdaAPIGatewayRequest = serde_json::from_value(req)?;
+            let client = APIHandler::new().await?;
+            let ip: SocketAddr = req.request_context.http.source_ip.parse()?;
+            let always_auth = match req.stage_variables.get("always_auth") {
+                None => false,
+                Some(v) => v == "true",
+            };
+            let req = req.into_request()?;
+            let auth = match req.headers().get(hyper::header::AUTHORIZATION) {
+                None => false,
+                Some(v) => {
+                    let auth_header = v.to_str()?.split(' ').collect::<Vec<&str>>();
+                    match auth_header[0] == "Basic" {
+                        false => false,
+                        true => {
+                            let userpass =
+                                String::from_utf8(base64_to_bytes(auth_header[1].into()))?
+                                    .split(':')
+                                    .map(|s| s.into())
+                                    .collect::<Vec<String>>();
+                            client
+                                .auth(userpass[0].clone(), userpass[1].clone())
+                                .await?
+                        }
+                    }
+                }
+            } || always_auth;
+            let resp = client.execute(APIRequest { req, ip, auth }).await?;
+
+            Ok(LambdaAPIGatewayResponse::from_response(resp).await?)
+        }
+        _ => Err(Box::new(HandlerError)),
+    }
+    */
 }
