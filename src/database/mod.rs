@@ -1,6 +1,7 @@
-pub mod database_tools;
+pub mod postgres;
 mod util;
-pub mod view_manager;
+
+use crate::Error;
 
 // COMMON STRUCTS
 #[derive(serde::Serialize)]
@@ -91,4 +92,70 @@ impl Default for DenViewInit {
             pass: "".into(),
         }
     }
+}
+
+#[async_trait::async_trait]
+pub trait Database {
+    async fn execute(&self, op: &DatabaseOperation<'_>) -> Result<Option<ViewRecord>, Error>;
+
+    async fn get_settings(&self) -> Result<DenViewSettings, Error>;
+}
+
+#[derive(Debug)]
+pub enum DatabaseOperation<'a> {
+    // GET: Gets a page's views by string path.
+    // If the record does not exist, this will always return an error.
+    Get(&'a str),
+
+    // UPDATE: Updates a page's views by string path.
+    //
+    // If the record does not exist, this will always return an error.
+    // Records should be tested for correctness before calling it
+    // into the database.
+    //
+    // This will, as of v0.1, only increment views.
+    UpdatePage(&'a str, &'a str),
+
+    /*
+    // CREATE: Creates a new page in the database.
+    //
+    // This is to resolve the two errors from above. Checking for
+    // correctness must be done by the caller.
+    CreatePage(String),
+    */
+    // FLUSH: This flushes the page_visitors table to the database,
+    // calculating all required values and adding them to the record,
+    // before deleting all related records from the page_visitors table.
+    //
+    // This level of denormalization is required for performance, as otherwise
+    // you would have to deal with querying n rows for several pages
+    // in the worst case (it is practically O(n) to calculate views from the
+    // database from page_visitors alone).
+    //
+    // Due to the length of time it could take to flush records to database,
+    // compared to fetching/updating, this should only be done by authorized
+    // clients/callers in order to ensure that the database is not overloaded
+    // with concurrent transactions.
+    Flush,
+}
+
+#[async_trait::async_trait]
+pub trait DatabaseTool {
+    async fn check(&self) -> Result<bool, Error>;
+
+    async fn get_folder(&self, folder_id: i32) -> Result<FolderRecord, Error>;
+
+    async fn get_page(&self, folder_id: i32, page_name: String) -> Result<PageRecord, Error>;
+
+    async fn delete_folder(&self, folder_id: i32) -> Result<(), Error>;
+
+    async fn delete_page(&self, folder_id: i32, page_name: String) -> Result<(), Error>;
+
+    async fn get_settings(&self) -> Result<DenViewSettings, Error>;
+
+    async fn update_settings(&self, settinsg: DenViewSettings) -> Result<(), Error>;
+
+    async fn auth(&self, user: String, pass: String) -> Result<bool, Error>;
+
+    async fn init(&self, init: DenViewInit) -> Result<(), Error>;
 }

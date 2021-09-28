@@ -1,36 +1,37 @@
-// database_tools.rs
-//
-// Database tools. These should all only be accessible via
-// authenticated methods, most of the time. These tools are
-// similar to ViewManager's calls, but have more calls
-// that imply a need for permissions (e.g., updating settings).
-
-use super::*;
-use crate::util::base64::bytes_to_base64;
+use crate::database::*;
 use crate::Error;
 use bb8::Pool;
-use bb8_postgres::{
-    tokio_postgres::{config::Config, NoTls},
-    PostgresConnectionManager,
-};
+use bb8_postgres::{tokio_postgres::NoTls, PostgresConnectionManager};
 use crypto::digest::Digest;
 use crypto::sha3::Sha3;
 
-pub struct DatabaseTools {
+pub struct PostgresDatabaseTools {
     db_pool: Pool<PostgresConnectionManager<NoTls>>,
 }
 
-impl DatabaseTools {
-    pub async fn new(config: Config) -> Result<Self, Error> {
-        Ok(DatabaseTools {
+impl PostgresDatabaseTools {
+    pub async fn new() -> Result<Self, Error> {
+        let user = std::env::var("DENVIEWS_USER").unwrap_or_else(|_| "denviews".to_string());
+        let pass = std::env::var("DENVIEWS_PASS").unwrap_or_else(|_| "denviews".to_string());
+        let host = std::env::var("DENVIEWS_HOST").unwrap_or_else(|_| "localhost".to_string());
+        let pool_amount = std::env::var("DENVIEWS_POOL_AMOUNT")
+            .unwrap_or_else(|_| "16".to_string())
+            .parse::<u32>()?;
+
+        let config = format!("postgresql://{1}:{2}@{0}", host, user, pass).parse()?;
+
+        Ok(PostgresDatabaseTools {
             db_pool: Pool::builder()
-                .max_size(4) // just in case - maybe make this configurable later?
+                .max_size(pool_amount) // just in case - maybe make this configurable later?
                 .build(PostgresConnectionManager::new(config, NoTls))
                 .await?,
         })
     }
+}
 
-    pub async fn check(&self) -> Result<bool, Error> {
+#[async_trait::async_trait]
+impl DatabaseTool for PostgresDatabaseTools {
+    async fn check(&self) -> Result<bool, Error> {
         //TODO: More indepth method of actually checking for a valid database.
         // At the moment, this is just to ensure that the database has a *settings* file,
         // and isn't some kind of validation check.
@@ -51,7 +52,7 @@ impl DatabaseTools {
         })
     }
 
-    pub async fn get_folder(&self, folder_id: i32) -> Result<FolderRecord, Error> {
+    async fn get_folder(&self, folder_id: i32) -> Result<FolderRecord, Error> {
         let conn = self.db_pool.get().await?;
 
         let mut pages: Vec<ViewRecord> = Vec::new();
@@ -151,7 +152,7 @@ impl DatabaseTools {
         })
     }
 
-    pub async fn get_page(&self, folder_id: i32, page_name: String) -> Result<PageRecord, Error> {
+    async fn get_page(&self, folder_id: i32, page_name: String) -> Result<PageRecord, Error> {
         let conn = self.db_pool.get().await?;
 
         let page = conn
@@ -197,7 +198,7 @@ impl DatabaseTools {
     //
     // TODO: Find out a way to delete the path views related to
     // deleting folders!!!
-    pub async fn delete_folder(&self, folder_id: i32) -> Result<(), Error> {
+    async fn delete_folder(&self, folder_id: i32) -> Result<(), Error> {
         let conn = self.db_pool.get().await?;
 
         conn.execute(
@@ -215,7 +216,7 @@ impl DatabaseTools {
     // delete_page
     //
     // Deletes a single page from the database.
-    pub async fn delete_page(&self, folder_id: i32, page_name: String) -> Result<(), Error> {
+    async fn delete_page(&self, folder_id: i32, page_name: String) -> Result<(), Error> {
         let conn = self.db_pool.get().await?;
 
         let path_id: i32 = conn
@@ -256,7 +257,7 @@ impl DatabaseTools {
         Ok(())
     }
 
-    pub async fn get_settings(&self) -> Result<DenViewSettings, Error> {
+    async fn get_settings(&self) -> Result<DenViewSettings, Error> {
         let conn = self.db_pool.get().await?;
 
         match self.check().await {
@@ -279,7 +280,7 @@ impl DatabaseTools {
         }
     }
 
-    pub async fn update_settings(&self, settings: DenViewSettings) -> Result<(), Error> {
+    async fn update_settings(&self, settings: DenViewSettings) -> Result<(), Error> {
         let conn = self.db_pool.get().await?;
 
         conn.execute(
@@ -295,7 +296,7 @@ impl DatabaseTools {
         Ok(())
     }
 
-    pub async fn auth(&self, user: String, pass: String) -> Result<bool, Error> {
+    async fn auth(&self, user: String, pass: String) -> Result<bool, Error> {
         let conn = self.db_pool.get().await?;
 
         let mut hasher = Sha3::sha3_256();
@@ -336,7 +337,7 @@ impl DatabaseTools {
         })
     }
 
-    pub async fn init(&self, init: DenViewInit) -> Result<(), Error> {
+    async fn init(&self, init: DenViewInit) -> Result<(), Error> {
         log::info!("!!! CREATING DATABASE NOW !!!");
         let mut conn = self.db_pool.get().await?;
 

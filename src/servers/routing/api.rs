@@ -1,6 +1,8 @@
 use super::response_utils;
 use super::tools::ToolsHandler;
-use crate::database::{view_manager::*, DenViewSettings};
+use crate::database::{
+    postgres::database::Postgres, Database, DatabaseOperation, DatabaseTool, DenViewSettings,
+};
 use crate::Error;
 use hyper::{
     header::{LOCATION, USER_AGENT},
@@ -8,9 +10,9 @@ use hyper::{
 };
 use std::{net::SocketAddr, sync::Arc};
 
-pub struct APIHandler {
-    db: Arc<ViewManager>,
-    tools: ToolsHandler,
+pub struct APIHandler<D, T> {
+    db: Arc<D>,
+    tools: ToolsHandler<T>,
     settings: Arc<DenViewSettings>,
     init_check: bool, // lazy, find a better way to do this
 }
@@ -34,27 +36,17 @@ impl std::fmt::Display for APIError {
     }
 }
 
-impl APIHandler {
-    pub async fn new() -> Result<Self, Error> {
+impl<D: Database, T: DatabaseTool> APIHandler<D, T> {
+    pub async fn new(db: Arc<D>, tools: T) -> Result<Self, Error> {
         // this assumes your DB server and this application server are on
         // the same network, and the DB server is otherwise inaccessible from
         // the outside without some kind of VPN/gateway into the network
-        let user = std::env::var("DENVIEWS_USER").unwrap_or_else(|_| "denviews".to_string());
-        let pass = std::env::var("DENVIEWS_PASS").unwrap_or_else(|_| "denviews".to_string());
-        let host = std::env::var("DENVIEWS_HOST").unwrap_or_else(|_| "localhost".to_string());
-        let pool_amount = std::env::var("DENVIEWS_POOL_AMOUNT")
-            .unwrap_or_else(|_| "16".to_string())
-            .parse::<u32>()?;
+        /*
         let db = Arc::new(
-            ViewManager::new(
-                pool_amount,
-                format!("postgresql://{1}:{2}@{0}", host, user, pass).parse()?,
-            )
-            .await?,
+            Postgres::new(format!("postgresql://{1}:{2}@{0}", host, user, pass).parse()?).await?,
         );
-        let tools =
-            ToolsHandler::new(format!("postgresql://{1}:{2}@{0}", host, user, pass).parse()?)
-                .await?;
+        */
+        let tools = ToolsHandler::new(tools);
         let init_check = tools.check().await?;
 
         if !init_check {
@@ -107,20 +99,20 @@ impl APIHandler {
             },
 
             (&Method::POST, "_denViews_flush") => match req.auth {
-                true => self.db_op(ViewManagerOperation::Flush, false).await,
+                true => self.db_op(DatabaseOperation::Flush, false).await,
                 false => Ok(response_utils::request_auth!()),
             },
 
             (&Method::GET, _) => {
                 self.db_op(
-                    ViewManagerOperation::Get(path.join("/").trim_end_matches('/')),
+                    DatabaseOperation::Get(path.join("/").trim_end_matches('/')),
                     true,
                 )
                 .await
             }
             (&Method::POST, _) => {
                 self.db_op(
-                    ViewManagerOperation::UpdatePage(
+                    DatabaseOperation::UpdatePage(
                         path.join("/").trim_end_matches('/'),
                         // will the EU scream at me for this? :eye:
                         &(req.ip.ip().to_string()
@@ -159,14 +151,10 @@ impl APIHandler {
         path
     }
 
-    async fn db_op(
-        &self,
-        op: ViewManagerOperation<'_>,
-        check: bool,
-    ) -> Result<Response<Body>, Error> {
+    async fn db_op(&self, op: DatabaseOperation<'_>, check: bool) -> Result<Response<Body>, Error> {
         log::info!("running operation: {:?}", op);
         match op {
-            ViewManagerOperation::Get(p) | ViewManagerOperation::UpdatePage(p, _) => {
+            DatabaseOperation::Get(p) | DatabaseOperation::UpdatePage(p, _) => {
                 if check {
                     let check = self.check_site(p).await;
                     match check {

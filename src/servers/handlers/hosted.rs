@@ -1,3 +1,4 @@
+use crate::database::postgres::{database::Postgres, database_tools::PostgresDatabaseTools};
 use crate::servers::routing::api::{APIHandler, APIRequest};
 use crate::util::base64::base64_to_bytes;
 use crate::Error;
@@ -36,7 +37,9 @@ use tokio_rustls::{
 // use native_tls::{TlsAcceptor, TlsStream, Identity};
 
 pub async fn serve() {
-    let client = Arc::new(APIHandler::new().await.unwrap());
+    let db = Arc::new(Postgres::new().await.unwrap());
+    let tools = PostgresDatabaseTools::new().await.unwrap();
+    let client = Arc::new(APIHandler::new(db, tools).await.unwrap());
     let settings = &client.clone().settings();
 
     match settings.use_https {

@@ -6,77 +6,49 @@
 // authentication/higher permissions should be the Flush
 // and Init operations.
 
-use super::util;
-use super::{DenViewSettings, ViewRecord};
+use crate::database::util;
+use crate::database::{Database, DatabaseOperation};
+use crate::database::{DenViewSettings, ViewRecord};
 use crate::Error;
 use bb8::Pool;
 use bb8_postgres::{
-    tokio_postgres::{config::Config, NoTls, Row},
+    tokio_postgres::{config::Config as PostgresConfig, NoTls, Row},
     PostgresConnectionManager,
 };
 use crypto::digest::Digest;
 use crypto::sha3::Sha3;
 use std::time::SystemTime;
 
-pub struct ViewManager {
+pub struct Postgres {
     db_pool: Pool<PostgresConnectionManager<NoTls>>,
 }
 
-#[derive(Debug)]
-pub enum ViewManagerOperation<'a> {
-    // GET: Gets a page's views by string path.
-    // If the record does not exist, this will always return an error.
-    Get(&'a str),
+impl Postgres {
+    pub async fn new() -> Result<Self, Error> {
+        let user = std::env::var("DENVIEWS_USER").unwrap_or_else(|_| "denviews".to_string());
+        let pass = std::env::var("DENVIEWS_PASS").unwrap_or_else(|_| "denviews".to_string());
+        let host = std::env::var("DENVIEWS_HOST").unwrap_or_else(|_| "localhost".to_string());
+        let pool_amount = std::env::var("DENVIEWS_POOL_AMOUNT")
+            .unwrap_or_else(|_| "16".to_string())
+            .parse::<u32>()?;
 
-    // UPDATE: Updates a page's views by string path.
-    //
-    // If the record does not exist, this will always return an error.
-    // Records should be tested for correctness before calling it
-    // into the database.
-    //
-    // This will, as of v0.1, only increment views.
-    UpdatePage(&'a str, &'a str),
+        let config = format!("postgresql://{1}:{2}@{0}", host, user, pass).parse()?;
 
-    /*
-    // CREATE: Creates a new page in the database.
-    //
-    // This is to resolve the two errors from above. Checking for
-    // correctness must be done by the caller.
-    CreatePage(String),
-    */
-    // FLUSH: This flushes the page_visitors table to the database,
-    // calculating all required values and adding them to the record,
-    // before deleting all related records from the page_visitors table.
-    //
-    // This level of denormalization is required for performance, as otherwise
-    // you would have to deal with querying n rows for several pages
-    // in the worst case (it is practically O(n) to calculate views from the
-    // database from page_visitors alone).
-    //
-    // Due to the length of time it could take to flush records to database,
-    // compared to fetching/updating, this should only be done by authorized
-    // clients/callers in order to ensure that the database is not overloaded
-    // with concurrent transactions.
-    Flush,
-}
-
-impl ViewManager {
-    pub async fn new(pool_size: u32, config: Config) -> Result<Self, Error> {
-        Ok(ViewManager {
+        Ok(Postgres {
             db_pool: Pool::builder()
-                .max_size(pool_size)
+                .max_size(pool_amount)
                 .build(PostgresConnectionManager::new(config, NoTls))
                 .await?,
         })
     }
+}
 
-    pub async fn execute(
-        &self,
-        op: &ViewManagerOperation<'_>,
-    ) -> Result<Option<ViewRecord>, Error> {
+#[async_trait::async_trait]
+impl Database for Postgres {
+    async fn execute(&self, op: &DatabaseOperation<'_>) -> Result<Option<ViewRecord>, Error> {
         match op {
-            ViewManagerOperation::Get(path) => Ok(Some(self.get_page_info(path).await?)),
-            ViewManagerOperation::UpdatePage(path, info) => {
+            DatabaseOperation::Get(path) => Ok(Some(self.get_page_info(path).await?)),
+            DatabaseOperation::UpdatePage(path, info) => {
                 self.append_visitor(path, info).await?;
                 Ok(None)
             }
@@ -86,11 +58,11 @@ impl ViewManager {
                 Ok(None)
             },
             */
-            ViewManagerOperation::Flush => {
+            DatabaseOperation::Flush => {
                 self.flush().await?;
                 Ok(None)
             } /*
-              ViewManagerOperation::Init(s) => {
+              DatabaseOperation::Init(s) => {
                   self.init(s).await?;
                   Ok(None)
               }
@@ -98,6 +70,27 @@ impl ViewManager {
         }
     }
 
+    async fn get_settings(&self) -> Result<DenViewSettings, Error> {
+        let conn = self.db_pool.get().await?;
+
+        let settings = conn
+            .query_opt(
+                "SELECT setting FROM settings WHERE setting_name = 'current_settings'",
+                &[],
+            )
+            .await;
+
+        match settings {
+            Err(_) => Ok(DenViewSettings::default()),
+            Ok(v) => match v {
+                Some(s) => Ok(serde_json::from_value(s.get(0))?),
+                None => Ok(DenViewSettings::default()),
+            },
+        }
+    }
+}
+
+impl Postgres {
     async fn get_page_info(&self, path: &str) -> Result<ViewRecord, Error> {
         let conn = self.db_pool.get().await?;
 
@@ -381,24 +374,5 @@ impl ViewManager {
         transaction.commit().await?;
 
         Ok(())
-    }
-
-    pub async fn get_settings(&self) -> Result<DenViewSettings, Error> {
-        let conn = self.db_pool.get().await?;
-
-        let settings = conn
-            .query_opt(
-                "SELECT setting FROM settings WHERE setting_name = 'current_settings'",
-                &[],
-            )
-            .await;
-
-        match settings {
-            Err(_) => Ok(DenViewSettings::default()),
-            Ok(v) => match v {
-                Some(s) => Ok(serde_json::from_value(s.get(0))?),
-                None => Ok(DenViewSettings::default()),
-            },
-        }
     }
 }

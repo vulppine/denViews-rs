@@ -1,13 +1,12 @@
 use super::response_utils;
 use crate::dashboard;
-use crate::database::{database_tools::DatabaseTools, view_manager::*, DenViewSettings, *};
+use crate::database::{DatabaseTool, DenViewSettings, *};
 use crate::Error;
-use bb8_postgres::tokio_postgres::config::Config;
 use hyper::{body::to_bytes, Body, Method, Request, Response, Uri};
 use std::sync::Arc;
 
-pub struct ToolsHandler {
-    tools: Arc<DatabaseTools>,
+pub struct ToolsHandler<T> {
+    tools: Arc<T>,
 }
 
 #[derive(serde::Deserialize)]
@@ -21,11 +20,11 @@ struct FolderQuery {
     folder_id: u32,
 }
 
-impl ToolsHandler {
-    pub async fn new(config: Config) -> Result<Self, Error> {
-        Ok(ToolsHandler {
-            tools: Arc::new(DatabaseTools::new(config).await?),
-        })
+impl<T: DatabaseTool> ToolsHandler<T> {
+    pub fn new(tools: T) -> Self {
+        ToolsHandler {
+            tools: Arc::new(tools),
+        }
     }
 
     pub async fn check(&self) -> Result<bool, Error> {
