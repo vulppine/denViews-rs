@@ -1,3 +1,4 @@
+pub mod mariadb;
 pub mod postgres;
 mod util;
 
