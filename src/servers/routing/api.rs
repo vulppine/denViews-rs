@@ -157,6 +157,7 @@ impl<D: Database, T: DatabaseTool> APIHandler<D, T> {
             DatabaseOperation::Get(p) | DatabaseOperation::UpdatePage(p, _) => {
                 if check {
                     let check = self.check_site(p).await;
+                    log::info!("check performed: response was {:?}", check);
                     match check {
                         Err(e) => return Ok(response_utils::internal_error!(e)),
                         Ok(v) => {
@@ -211,7 +212,7 @@ impl<D: Database, T: DatabaseTool> APIHandler<D, T> {
             .path_and_query(String::from("/") + path)
             .build()?;
         log::info!("checking {:?}", uri);
-        let https = hyper_rustls::HttpsConnector::with_native_roots();
+        let https = hyper_rustls::HttpsConnector::with_webpki_roots();
         let client = Client::builder().build::<_, Body>(https);
         let check = client.get(uri).await;
         log::debug!("{:?}", check);

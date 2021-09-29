@@ -1,4 +1,5 @@
 use crate::database::postgres::{database::Postgres, database_tools::PostgresDatabaseTools};
+use crate::database::start_db;
 use crate::servers::routing::api::{APIHandler, APIRequest};
 use crate::util::base64::base64_to_bytes;
 use crate::Error;
@@ -83,7 +84,12 @@ impl LambdaAPIGatewayRequest {
 
         req = req.uri(uri);
 
-        Ok(req.body(hyper::Body::from(self.body.clone()))?)
+        let body = match self.is_base64_encoded {
+            false => self.body,
+            true => String::from_utf8(base64_to_bytes(self.body))?,
+        };
+
+        Ok(req.body(hyper::Body::from(body))?)
     }
 }
 
@@ -242,13 +248,14 @@ impl std::fmt::Display for HandlerError {
 }
 
 async fn handle(req: Value, _: lambda::Context) -> Result<LambdaAPIGatewayResponse, Error> {
-    let db = Arc::new(Postgres::new().await?);
-    let tools = PostgresDatabaseTools::new().await?;
+    log::info!("acquiring db and db_tools connection now");
+    let (db, tools) = start_db().await?;
+    let db = Arc::new(db);
     log::info!("{:?}", req);
     match serde_json::from_value::<LambdaAPIGatewayRequest>(req.clone()) {
         Ok(req) => {
             let client = APIHandler::new(db, tools).await?;
-            let ip: SocketAddr = req.request_context.http.source_ip.parse()?;
+            let ip: SocketAddr = format!("{}:0", req.request_context.http.source_ip).parse()?;
             let always_auth = match req.stage_variables.get("always_auth") {
                 None => false,
                 Some(v) => v == "true",
@@ -294,7 +301,7 @@ async fn handle(req: Value, _: lambda::Context) -> Result<LambdaAPIGatewayRespon
                 let resp = client
                     .execute(APIRequest {
                         req,
-                        ip: "0.0.0.0".parse()?,
+                        ip: "127.0.0.1:3306".parse()?,
                         auth: true,
                     })
                     .await?;

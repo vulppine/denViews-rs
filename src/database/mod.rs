@@ -1,7 +1,9 @@
 pub mod mariadb;
 pub mod postgres;
+mod start;
 mod util;
 
+pub use self::start::start_db;
 use crate::Error;
 
 // COMMON STRUCTS

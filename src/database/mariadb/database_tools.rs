@@ -4,6 +4,7 @@ use bb8::Pool;
 use bb8_postgres::{tokio_postgres::NoTls, PostgresConnectionManager};
 use crypto::digest::Digest;
 use crypto::sha3::Sha3;
+use rust_decimal::{prelude::ToPrimitive, Decimal};
 use sqlx::{mysql, ConnectOptions, Row};
 
 pub struct MariaDBDatabaseTools {
@@ -120,7 +121,7 @@ impl DatabaseTool for MariaDBDatabaseTools {
             pages.push(ViewRecord {
                 page: row.get(0),
                 views: views.get(0),
-                hits: views.get(1),
+                hits: views.get::<Decimal, usize>(1).to_i64().unwrap(),
             });
         }
 
@@ -184,7 +185,7 @@ impl DatabaseTool for MariaDBDatabaseTools {
             folder_id: page.get(2),
             page: page_name,
             views: page_views.get(0),
-            hits: page_views.get(1),
+            hits: page_views.get::<Decimal, usize>(1).to_i64().unwrap(),
         })
     }
 
@@ -395,7 +396,7 @@ impl DatabaseTool for MariaDBDatabaseTools {
         sqlx::query(
             "
             CREATE TABLE visitors (
-                visitor_id TEXT PRIMARY KEY
+                visitor_id CHAR(64) PRIMARY KEY
                     DEFAULT '---'
             )
             ",
@@ -410,7 +411,7 @@ impl DatabaseTool for MariaDBDatabaseTools {
                 page_id INT NOT NULL
                     REFERENCES pages
                     ON DELETE CASCADE,
-                visitor_id TEXT
+                visitor_id CHAR(64)
                     REFERENCES visitors
                     ON DELETE SET DEFAULT,
                 visitor_hits INT NOT NULL DEFAULT 1
@@ -459,7 +460,7 @@ impl DatabaseTool for MariaDBDatabaseTools {
         sqlx::query(
             "
             CREATE TABLE settings (
-                setting_name TEXT PRIMARY KEY,
+                setting_name VARCHAR(32) PRIMARY KEY,
                 setting JSON
             )
             ",

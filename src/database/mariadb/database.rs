@@ -18,6 +18,7 @@ use bb8_postgres::{
 use chrono::{offset::Utc, DateTime};
 use crypto::digest::Digest;
 use crypto::sha3::Sha3;
+use rust_decimal::{prelude::ToPrimitive, Decimal};
 use sqlx::{mysql, ConnectOptions, Row};
 use std::time::SystemTime;
 
@@ -40,12 +41,16 @@ impl MariaDB {
             .password(&pass)
             .database("denviews");
 
-        Ok(MariaDB {
-            db_pool: mysql::MySqlPoolOptions::new()
-                .max_connections(pool_amount)
-                .connect_with(init_conn)
-                .await?,
-        })
+        let db_pool = mysql::MySqlPoolOptions::new()
+            .max_connections(pool_amount)
+            .connect_with(init_conn)
+            .await?;
+
+        sqlx::query("SET SESSION sql_mode = 'NO_AUTO_VALUE_ON_ZERO'")
+            .execute(&db_pool)
+            .await?;
+
+        Ok(MariaDB { db_pool })
     }
 }
 
@@ -113,7 +118,7 @@ impl MariaDB {
         Ok(ViewRecord {
             page: path.to_string(),
             views: record.get(0),
-            hits: record.get(1),
+            hits: record.get::<Decimal, usize>(1).to_i64().unwrap(),
         })
     }
 
@@ -338,7 +343,7 @@ impl MariaDB {
         for page in views {
             let id: i32 = page.get(0);
             let views: i64 = page.get(1);
-            let hits: i64 = page.get(2);
+            let hits: i64 = page.get::<Decimal, usize>(2).to_i64().unwrap();
 
             sqlx::query(
                 "

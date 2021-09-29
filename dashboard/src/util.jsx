@@ -2,7 +2,8 @@ import React from 'react'
 
 function fetchFromApi (route, searchParams) {
   return async () => {
-    const url = new URL('https://127.0.0.1/_denViews_dash/api/' + route)
+    const currentUrl = new URL(document.URL)
+    const url = new URL([currentUrl.protocol, currentUrl.hostname].join('//') + '/_denViews_dash/api/' + route)
     if (searchParams !== null) {
       url.search = '?' + searchParams.toString()
     }

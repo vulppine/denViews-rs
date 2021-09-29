@@ -4,9 +4,11 @@ version = "0.1.0"
 edition = "2018"
 
 [features]
-default = ["hosted"]
-aws-lambda = ["lambda_runtime"]
+default = ["hosted", "postgres"]
+aws-lambda = ["lambda_runtime", "mariadb"]
 hosted = []
+postgres = []
+mariadb = []
 
 [[bin]]
 name = "bootstrap"
@@ -30,7 +32,7 @@ futures-core = "0.3.17"
 futures-util = "0.3.17"
 http = "0.2.4"
 hyper = { version = "0.14.12", features = ["client", "server", "http1", "http2", "tcp", "stream"] }
-hyper-rustls = { version = "0.22.1", features = ["rustls-native-certs"] }
+hyper-rustls = { version = "0.22.1", features = ["rustls-native-certs", "webpki-roots"] }
 lambda_runtime = { version = "0.4", optional = true }
 log = "0.4.14"
 pin-project = "1.0.8"
@@ -38,11 +40,12 @@ r2d2 = "0.8.9"
 r2d2_postgres = "0.18.1"
 rand = "0.8.4"
 rust-crypto = "0.2.36"
+rust_decimal = "1.16"
 rust-embed = "6.2.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_qs = "0.8.4"
-sqlx = { version = "0.5", features = [ "runtime-tokio-rustls", "mysql", "postgres", "chrono", "json" ] }
+sqlx = { version = "0.5", features = [ "runtime-tokio-rustls", "mysql", "postgres", "chrono", "json", "decimal" ] }
 tokio = { version = "1.11.0", features = ["full"] }
 tokio-rustls = "0.22.0"
 tracing = "0.1.26"

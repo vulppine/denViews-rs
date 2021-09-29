@@ -79,6 +79,7 @@ pub fn base64_to_bytes(encoded: String) -> Vec<u8> {
                 for i in INDEX.iter().enumerate() {
                     if i.1 == e.1 {
                         h[e.0] = i.0 as u8;
+                        break;
                     }
                     count += 1;
                 }

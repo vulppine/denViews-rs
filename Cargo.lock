@@ -23,6 +23,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "arrayvec"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "23b62fc65de8e4e7f52534fb52b0f3ed04746ae267519eef2a83941e8085068b"
+
+[[package]]
 name = "async-stream"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -287,6 +293,7 @@ dependencies = [
  "rand 0.8.4",
  "rust-crypto",
  "rust-embed",
+ "rust_decimal",
  "serde",
  "serde_json",
  "serde_qs",
@@ -648,6 +655,7 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "webpki",
+ "webpki-roots",
 ]
 
 [[package]]
@@ -1350,6 +1358,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "rust_decimal"
+version = "1.16.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e0f1028de22e436bb35fce070310ee57d57b5e59ae77b4e3f24ce4773312b813"
+dependencies = [
+ "arrayvec",
+ "num-traits",
+ "serde",
+]
+
+[[package]]
 name = "rustc-serialize"
 version = "0.3.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1676,6 +1695,7 @@ dependencies = [
  "percent-encoding",
  "rand 0.8.4",
  "rsa",
+ "rust_decimal",
  "rustls",
  "serde",
  "serde_json",
