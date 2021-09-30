@@ -21,10 +21,13 @@ import sys
 
 from botocore.exceptions import ClientError
 import boto3
+import mariadb
 
 
 def main():
     keys = get_aws_info()
+
+    check_service_existance(keys)
 
     subnet_info = None
     subnet_info = create_vpc(keys)
@@ -55,6 +58,64 @@ def resource_client(service, keys):
     )
 
 
+def service_checker(service, error, **messages):
+    try:
+        service()
+        print(messages["error_message"])
+    except ClientError as err:
+        if err.response["Error"]["Code"] == error:
+            print(messages["success_message"])
+        else:
+            raise err
+
+
+def check_service_existance(keys):
+
+    # VPC check
+    vpc_check = service_client("ec2", keys).describe_vpcs(
+        Filters=[{"Name": "tag-key", "Values": ["denViews"]}]
+    )
+    if len(vpc_check["Vpcs"]) != 0:
+        raise SetupError("denviews vpc exists: aborting")
+
+    # RDS CHECK
+    rds_client = service_client("rds", keys)
+    service_checker(
+        lambda: rds_client.describe_db_subnet_groups(
+            DBSubnetGroupName="denviews-rds-subnet-group"
+        ),
+        "DBSubnetGroupNotFoundFault",
+        erro_message="denviews rds db subnet found: aborting",
+        success_message="db subnet not found, continuing"
+    )
+    service_checker(
+        lambda: rds_client.describe_db_instances(
+            DBInstanceIdentifier="denviews"
+        ),
+        "DBInstanceNotFoundFault",
+        error_message="denviews rds instance exists: aborting",
+        success_message="db instance not found, continuing"
+    )
+
+    # LAMBDA CHECK
+    service_checker(
+        lambda: service_client("lambda", keys).get_function(
+            FunctionName="denViews"
+        ),
+        "ResourceNotFoundException",
+        error_message="denViews lambda already exists, aborting",
+        success_message="denViews lambda not found - uploading now"
+    )
+
+    # API GATEWAY CHECK
+    service_checker(
+        lambda: service_client("apigatewayv2", keys).get_api(ApiId="denviews"),
+        "NotFoundException",
+        error_message="denViews API already exists, aborting",
+        success_message="denViews API does not exist"
+    )
+
+
 def create_vpc(keys):
     """Creates the denViews VPC.
 
@@ -71,7 +132,10 @@ def create_vpc(keys):
     client = service_client('ec2', keys)
     res = resource_client('ec2', keys)
 
-    vpc = res.create_vpc(CidrBlock="192.168.60.0/24")
+    vpc = res.create_vpc(
+        CidrBlock="192.168.60.0/24",
+        TagSpecifications=[{"Tags": [{"denViews": "denViews"}]}]
+    )
     client.get_waiter("vpc_available").wait(
         Filters=[{
             "Name": "vpc-id",
@@ -120,33 +184,11 @@ def create_vpc(keys):
 def create_rds(subnet_info, keys):
     client = service_client('rds', keys)
 
-    try:
-        client.describe_db_subnet_groups(
-            DBSubnetGroupName="denviews-rds-subnet-group"
-        )
-        raise SetupError("denviews rds subnet group exists: aborting")
-    except ClientError as err:
-        if err.response["Error"]["Code"] == "DBSubnetGroupNotFoundFault":
-            print("db subnet not found, continuing")
-        else:
-            raise err
-
     client.create_db_subnet_group(
         DBSubnetGroupName="denviews-rds-subnet-group",
         DBSubnetGroupDescription="denViews RDS subnet group.",
         SubnetIds=subnet_info["subnets"]
     )
-
-    try:
-        client.describe_db_instances(
-            DBInstanceIdentifier="denviews"
-        )
-        raise SetupError("denviews rds instance exists: aborting")
-    except ClientError as err:
-        if err.response["Error"]["Code"] == "DBInstanceNotFoundFault":
-            print("db instance not found, continuing")
-        else:
-            raise err
 
     rds = client.create_db_instance(
         DBName="denViews",
@@ -154,7 +196,7 @@ def create_rds(subnet_info, keys):
         AllocatedStorage=20,
         DBInstanceClass="db.t2.micro",
         Engine="mariadb",
-        MasterUserName="denviews",
+        MasterUsername="denviews",
         MasterUserPassword="denviews",  # FIGURE SOMETHING OUT FOR THIS
         DBSubnetGroupName="denviews-rds-subnet-group",
         VpcSecurityGroupIds=list(map(
@@ -169,20 +211,30 @@ def create_rds(subnet_info, keys):
         DBInstanceIdentifier="denviews"
     )
 
+    setup_rds(rds, "denviews")
+
     return rds
+
+
+def setup_rds(rds, password):
+    conn = mariadb.connect(
+        user=rds["MasterUsername"],
+        password=password,
+        host=rds["Endpoint"]["Address"],
+        port=rds["Endpoint"]["Port"]
+    )
+
+    cur = conn.cursor()
+
+    cur.execute("CREATE DATABASE denviews")
+    cur.execute("SET GLOBAL sql_mode = 'NO_AUTO_VALUE_ON_ZERO'")
+
+    conn.commit()
+    conn.close()
 
 
 def create_lambda(zipfile, subnet_info, rds, keys):
     client = service_client('lambda', keys)
-
-    try:
-        client.get_function(FunctionName="denViews")
-        raise SetupError("denViews lambda already exists, aborting")
-    except ClientError as err:
-        if err.response['Error']['Code'] == 'ResourceNotFoundException':
-            print("denViews lambda not found - uploading now")
-        else:
-            raise err
 
     client_iam = service_client('iam', keys)
     client_iam.create_role(
