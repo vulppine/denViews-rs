@@ -5,7 +5,7 @@ use bb8_postgres::{tokio_postgres::NoTls, PostgresConnectionManager};
 use crypto::digest::Digest;
 use crypto::sha3::Sha3;
 use rust_decimal::{prelude::ToPrimitive, Decimal};
-use sqlx::{mysql, ConnectOptions, Row};
+use sqlx::{mysql, ConnectOptions, Executor, Row};
 
 pub struct MariaDBDatabaseTools {
     db_pool: mysql::MySqlPool,
@@ -28,6 +28,13 @@ impl MariaDBDatabaseTools {
 
         Ok(MariaDBDatabaseTools {
             db_pool: mysql::MySqlPoolOptions::new()
+                .after_connect(|conn| {
+                    Box::pin(async move {
+                        conn.execute("SET SESSION sql_mode = 'NO_AUTO_VALUE_ON_ZERO");
+
+                        Ok(())
+                    })
+                })
                 .max_connections(pool_amount)
                 .connect_with(init_conn)
                 .await?,
@@ -353,7 +360,7 @@ impl DatabaseTool for MariaDBDatabaseTools {
         sqlx::query(
             "
             INSERT INTO folders
-            VALUES (0, null, 'root')
+            VALUES (0, null, 'root');
             ",
         )
         .execute(&mut transaction)
