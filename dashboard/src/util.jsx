@@ -1,4 +1,10 @@
 import React from 'react'
+import 'tailwindcss/tailwind.css'
+
+const DenViewsHeader = () =>
+  <div className='border-b-2 mb-4'>
+    <h1 className='text-xl'>denViews</h1>
+  </div>
 
 function fetchFromApi (route, searchParams) {
   return async () => {
@@ -45,4 +51,4 @@ function futureWrapper (Component, Loader, future) {
   }
 }
 
-export { fetchFromApi, futureWrapper, Loading }
+export { DenViewsHeader, fetchFromApi, futureWrapper, Loading }

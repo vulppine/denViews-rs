@@ -3,7 +3,8 @@ import React from 'react'
 import PropTypes from 'prop-types'
 import FolderDisplayer from './Folders'
 import ViewDisplayer from './Pages'
-import './App.css'
+import { DenViewsHeader } from './util'
+import 'tailwindcss/tailwind.css'
 
 class FolderChooser extends React.Component {
   constructor (props) {
@@ -43,7 +44,8 @@ function App () {
   const folderID = uri.searchParams.get('folder_id') === null ? 0 : uri.searchParams.get('folder_id')
   const pageName = uri.searchParams.get('page_name')
   return (
-    <div className='App'>
+    <div className='md:container md:mt-4 md:rounded md:shadow-lg mx-auto p-4'>
+      <DenViewsHeader />
       {
         pageName === null
           ? <FolderChooser folderID={folderID} />
